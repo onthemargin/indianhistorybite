@@ -50,8 +50,8 @@ const securityHeaders = () => {
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
-                styleSrc: ["'self'", "'unsafe-inline'"],
-                scriptSrc: ["'self'", "'unsafe-inline'"],
+                styleSrc: ["'self'", "'unsafe-inline'"], // Required for inline styles
+                scriptSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"], // Allow DOMPurify CDN
                 imgSrc: ["'self'", "data:", "https:"],
                 connectSrc: ["'self'"],
                 fontSrc: ["'self'"],
@@ -68,6 +68,9 @@ const securityHeaders = () => {
             maxAge: 31536000,
             includeSubDomains: true,
             preload: true
+        },
+        referrerPolicy: {
+            policy: 'strict-origin-when-cross-origin'
         }
     });
 };

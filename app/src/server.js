@@ -2,7 +2,13 @@ const path = require('path');
 const fs = require('fs');
 
 // Load environment variables
-require('dotenv').config({ path: '/etc/indianhistorybite/.env' });
+// Try production path first, fall back to local .env
+const dotenv = require('dotenv');
+if (process.env.NODE_ENV === 'production' && fs.existsSync('/etc/indianhistorybite/.env')) {
+    dotenv.config({ path: '/etc/indianhistorybite/.env' });
+} else {
+    dotenv.config();
+}
 
 const express = require('express');
 const axios = require('axios');
@@ -42,17 +48,24 @@ app.use(security.rateLimiters.general);
 // CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
-        const allowedOrigins = process.env.ALLOWED_ORIGINS 
+        // In production, always require origin header
+        if (process.env.NODE_ENV === 'production' && !origin) {
+            return callback(new Error('Not allowed by CORS - origin required'));
+        }
+
+        const allowedOrigins = process.env.ALLOWED_ORIGINS
             ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
             : ['http://localhost:3001'];
-        
-        if (!origin || allowedOrigins.includes(origin)) {
+
+        // Allow if in allowedOrigins, or no origin in development only
+        if (allowedOrigins.includes(origin) || (!origin && process.env.NODE_ENV !== 'production')) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true
+    credentials: true,
+    maxAge: 86400 // Cache preflight requests for 24 hours
 };
 
 // Middleware
