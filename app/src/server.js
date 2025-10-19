@@ -12,7 +12,6 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync('/etc/indianhistorybi
 
 const express = require('express');
 const axios = require('axios');
-const chokidar = require('chokidar');
 const cors = require('cors');
 const security = require('./security');
 
@@ -167,7 +166,11 @@ async function executeClaudeAPICall(prompt) {
 
 // Process prompt file with variation for fresh content
 async function processPromptFile() {
-    if (currentResult.isProcessing) return;
+    // Allow concurrent requests to queue
+    if (currentResult.isProcessing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (currentResult.isProcessing) return; // Still processing, return cached
+    }
     
     try {
         if (!fs.existsSync(promptFile)) {
@@ -192,10 +195,26 @@ async function processPromptFile() {
             return;
         }
         
-        // Add variation to ensure different content each time
+        // Add strong variation to ensure completely different content each time
         const timestamp = new Date().toISOString();
         const randomSeed = Math.random().toString(36).substring(7);
-        const prompt = `${basePrompt}\n\nGeneration ID: ${randomSeed}\nTimestamp: ${timestamp}\nIMPORTANT: This must be a completely different historical figure from any previous generation.`;
+        const uniqueId = Date.now() + Math.random();
+        const randomNumber = Math.floor(Math.random() * 1000000);
+
+        const prompt = `${basePrompt}
+
+Generation Metadata (use this to ensure uniqueness):
+- Generation ID: ${randomSeed}
+- Timestamp: ${timestamp}
+- Unique Request ID: ${uniqueId}
+- Random Seed: ${randomNumber}
+
+CRITICAL INSTRUCTIONS:
+1. Generate a story about a COMPLETELY DIFFERENT historical figure than any previous generation
+2. Use the random seed above to select a unique figure
+3. Vary the time period, region, and theme
+4. NEVER repeat the same historical figure
+5. Prioritize lesser-known figures to maximize variety`;
         
         currentResult.isProcessing = true;
         currentResult.response = 'Processing...';
@@ -215,9 +234,21 @@ async function processPromptFile() {
 }
 
 // Routes
-// Public endpoint - get current result
-app.get(basePath + '/api/result', (req, res) => {
-    res.json(currentResult);
+// Public endpoint - get current result (generates new story on each request)
+app.get(basePath + '/api/result', async (req, res) => {
+    try {
+        // Generate a fresh story on every request
+        await processPromptFile();
+        res.json(currentResult);
+    } catch (error) {
+        console.error('Error generating story:', error);
+        res.status(500).json({
+            response: 'Error generating story',
+            isProcessing: false,
+            lastModified: new Date().toISOString(),
+            error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
+        });
+    }
 });
 
 // Protected endpoint - refresh content
@@ -242,17 +273,6 @@ app.get(basePath, (req, res) => {
 
 app.get(basePath + '/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// Watch prompt file for changes
-const watcher = chokidar.watch(promptFile, { 
-    ignored: /^\./, 
-    persistent: true 
-});
-
-watcher.on('change', () => {
-    console.log('prompt.txt changed, processing...');
-    processPromptFile();
 });
 
 // Initial processing
