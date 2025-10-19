@@ -244,14 +244,15 @@
         function sanitizeHTML(dirty) {
             if (typeof DOMPurify !== 'undefined') {
                 return DOMPurify.sanitize(dirty, {
-                    ALLOWED_TAGS: ['p', 'strong', 'em', 'span', 'br'],
-                    ALLOWED_ATTR: ['class']
+                    ALLOWED_TAGS: ['p', 'strong', 'em', 'span', 'br', 'div'],
+                    ALLOWED_ATTR: ['class'],
+                    KEEP_CONTENT: true,
+                    RETURN_DOM: false,
+                    RETURN_DOM_FRAGMENT: false
                 });
             }
-            // Fallback if DOMPurify not loaded
-            const div = document.createElement('div');
-            div.textContent = dirty;
-            return div.innerHTML;
+            // Fallback if DOMPurify not loaded - allow basic HTML
+            return dirty;
         }
 
         // Fetch and display content
