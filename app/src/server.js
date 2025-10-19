@@ -308,22 +308,13 @@ process.on('SIGINT', () => {
 
 function gracefulShutdown() {
     console.log('Shutting down server...');
-    
-    // Stop scheduler if it exists
-    if (global.scheduler) {
-        global.scheduler.stop();
-        console.log('Daily scheduler stopped');
-    }
-    
-    // Close watcher
-    watcher.close();
-    
+
     // Close server
     server.close(() => {
         console.log('HTTP server closed');
         process.exit(0);
     });
-    
+
     // Force close after 10 seconds
     setTimeout(() => {
         console.error('Could not close connections in time, forcefully shutting down');
