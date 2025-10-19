@@ -1,0 +1,73 @@
+# Runtime directory (entire runtime folder excluded)
+../runtime/
+../../runtime/
+
+# Runtime files (not part of source code)
+*.log
+logs/
+claude_runs.log
+
+# Environment variables (contains API keys)
+.env
+.env.local
+.env.production
+.env.staging
+
+# Runtime data directories
+uploads/
+data/
+
+# Dependency directories
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime process files
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# SSL certificates
+*.key
+*.pem
+*.crt
+*.p12
+
+# Actual systemd service file (use template instead)
+indianhistorybite.service
+
+# Claude Code specific
+.claude/

@@ -1,0 +1,10 @@
+Tell me a story about a lesser-known historical figure from Indian history who changed the course of their region's destiny. Present the story in this exact JSON format:
+
+{
+  "name": "Person's Name",
+  "title": "Brief descriptive title",
+  "content": "A complete story of 1500-2000 words written in an engaging narrative style. Include specific historical details, dates, and the impact they had. Use **bold text** for emphasis on key points.",
+  "shareableQuote": "An inspiring quote or key insight from the story that captures the essence of this historical figure."
+}
+
+Do not ask follow-up questions or provide additional commentary. Only return the JSON response.
