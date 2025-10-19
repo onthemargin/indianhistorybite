@@ -6,11 +6,11 @@ A web application that delivers daily bite-sized stories from Indian history.
 
 ## Features
 
-- 📱 Mobile-first responsive design
+- 📱 Responsive design for all devices
 - 📖 Historical stories with shareable quotes
 - ⚡ Fast loading and lightweight
 - 🎨 Modern, clean interface
-- 🔄 Daily content updates
+- 🔄 Content updates on refresh
 
 ## Self-Hosting Guide
 
@@ -56,15 +56,7 @@ BASE_PATH=/indianhistorybite
 RUNTIME_DIR=../runtime
 ```
 
-### Step 3: Generate VAPID Keys (Optional)
-
-```bash
-node generate-vapid-keys.js
-```
-
-This creates `vapid-keys.env` with your VAPID keys.
-
-### Step 4: Development
+### Step 3: Development
 
 Start the development server:
 
@@ -74,16 +66,11 @@ npm start
 
 Visit `http://localhost:3001` to see your app.
 
-### Step 5: Production Deployment
+### Step 4: Production Deployment
 
 #### Option A: Simple Server Deployment
 
-1. **Generate production keys:**
-   ```bash
-   node generate-production-keys.js
-   ```
-
-2. **Install as system service (Linux):**
+1. **Install as system service (Linux):**
    ```bash
    sudo cp indianhistorybite.service.template /etc/systemd/system/indianhistorybite.service
    sudo systemctl daemon-reload
@@ -91,7 +78,7 @@ Visit `http://localhost:3001` to see your app.
    sudo systemctl start indianhistorybite
    ```
 
-3. **Configure reverse proxy (nginx example):**
+2. **Configure reverse proxy (nginx example):**
    ```nginx
    server {
        listen 80;
@@ -143,7 +130,7 @@ docker run -d -p 3001:3001 --env-file .env indianhistorybite
 2. Set environment variables in the platform dashboard
 3. Deploy automatically from your main branch
 
-### Step 6: Customize Content
+### Step 5: Customize Content
 
 Edit `runtime/data/prompt.txt` to customize the historical content generation:
 
@@ -170,17 +157,9 @@ Generate a historically accurate, engaging story about Indian history...
    - Change the PORT in `.env` if 3001 is occupied
    - Update your reverse proxy configuration accordingly
 
-3. **VAPID Keys:**
-   - Generate VAPID keys using `generate-vapid-keys.js` if needed
-   - Ensure HTTPS is enabled for production
-
-4. **Service Worker Issues:**
-   - Clear browser cache and reload
-   - Check browser console for errors
-
 ### Security Considerations
 
-- Never commit `.env` or `vapid-keys.env` files
+- Never commit `.env` files
 - Use strong, random values for `APP_API_KEY`
 - Enable HTTPS in production
 - Regularly update dependencies: `npm audit fix`
@@ -191,14 +170,11 @@ Generate a historically accurate, engaging story about Indian history...
 - `GET /indianhistorybite/` - Main app interface
 - `GET /indianhistorybite/api/result` - Get current story
 - `POST /indianhistorybite/api/refresh` - Generate new story (requires auth)
-- `POST /indianhistorybite/api/subscribe` - Subscribe endpoint
-- `GET /indianhistorybite/api/scheduler-status` - System status (requires auth)
 
 ## Configuration Options
 
 The app requires:
 - **Claude API key** for story generation (required)
-- **VAPID keys** (optional)
 - **App API key** for securing admin endpoints (optional)
 
 See `.env.example` for all available environment variables.

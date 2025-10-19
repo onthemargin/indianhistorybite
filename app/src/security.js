@@ -35,14 +35,7 @@ const rateLimiters = {
         10,
         'Refresh limit exceeded. Please wait before requesting new content.'
     ),
-    
-    // Subscribe endpoint - 5 requests per hour
-    subscribe: createRateLimiter(
-        60 * 60 * 1000,
-        5,
-        'Subscription limit exceeded. Please try again later.'
-    ),
-    
+
     // Very strict for admin endpoints - 5 requests per hour
     admin: createRateLimiter(
         60 * 60 * 1000,
@@ -88,18 +81,6 @@ const validators = {
             .withMessage('Prompt must be between 1 and 5000 characters')
             .matches(/^[a-zA-Z0-9\s.,!?'"()-]+$/)
             .withMessage('Prompt contains invalid characters')
-    ],
-    
-    subscription: [
-        body('endpoint')
-            .isURL()
-            .withMessage('Invalid subscription endpoint'),
-        body('keys.p256dh')
-            .isBase64()
-            .withMessage('Invalid p256dh key'),
-        body('keys.auth')
-            .isBase64()
-            .withMessage('Invalid auth key')
     ]
 };
 

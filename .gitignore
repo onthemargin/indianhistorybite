@@ -14,7 +14,6 @@ yarn-error.log*
 # Runtime directories
 runtime/logs/
 runtime/uploads/
-runtime/data/push-subscriptions.json
 runtime/data/*.json
 # Allow prompt.txt to be committed (it's shareable)
 !runtime/data/prompt.txt
@@ -45,8 +44,6 @@ Thumbs.db
 *.key
 *.crt
 *.p12
-vapid-keys.env
-*-keys.env
 secrets.json
 credentials.json
 
