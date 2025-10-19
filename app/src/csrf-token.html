@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CSRF Token Generator</title>
+</head>
+<body>
+    <h1>Get CSRF Token</h1>
+    <button onclick="getToken()">Generate Token</button>
+    <div id="token"></div>
+    
+    <script>
+    async function getToken() {
+        try {
+            const response = await fetch('/indianhistorybite/api/csrf-token');
+            const data = await response.json();
+            document.getElementById('token').innerHTML = `
+                <p>Token: <code>${data.token}</code></p>
+                <p>Use this in your request headers as: X-CSRF-Token</p>
+            `;
+        } catch (error) {
+            document.getElementById('token').innerHTML = `Error: ${error.message}`;
+        }
+    }
+    </script>
+</body>
+</html>

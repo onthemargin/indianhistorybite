@@ -1,0 +1,54 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Runtime directories
+runtime/logs/
+runtime/uploads/
+runtime/data/push-subscriptions.json
+runtime/data/*.json
+# Allow prompt.txt to be committed (it's shareable)
+!runtime/data/prompt.txt
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+
+# Security and credentials
+*.pem
+*.key
+*.crt
+*.p12
+vapid-keys.env
+*-keys.env
+secrets.json
+credentials.json
+
+# Claude Code specific
+.claude/
