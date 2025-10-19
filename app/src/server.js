@@ -55,7 +55,7 @@ const corsOptions = {
 
         const allowedOrigins = process.env.ALLOWED_ORIGINS
             ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-            : ['http://localhost:3001'];
+            : [];
 
         // Allow if in allowedOrigins, or no origin in development only
         if (allowedOrigins.includes(origin) || (!origin && process.env.NODE_ENV !== 'production')) {

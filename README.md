@@ -175,7 +175,7 @@ RUNTIME_DIR=../runtime
 NODE_ENV=development
 
 # OPTIONAL: Allowed CORS origins (comma-separated)
-ALLOWED_ORIGINS=http://localhost:3001,https://yourdomain.com
+ALLOWED_ORIGINS=https://app.gyatso.me
 ```
 
 **Generate a secure APP_API_KEY:**
@@ -228,23 +228,21 @@ npm start
 
 **You should see:**
 ```
-Server running at http://localhost:3001
+Server running on port 3001
 Access the app at /indianhistorybite
-Environment: development
-WARNING: API key protection is DISABLED (set APP_API_KEY)
+Environment: production
 ```
 
 **Access the app:**
-- Open browser to: `http://localhost:3001/indianhistorybite`
-- Or just: `http://localhost:3001` (if BASE_PATH is empty)
+- Open browser to: `https://app.gyatso.me/indianhistorybite`
 
 ### Step 6: Test the Application
 
 **Verify it's working:**
 
 1. **View the frontend:**
-   - Open `http://localhost:3001/indianhistorybite` in your browser
-   - You should see "Loading..." or a placeholder message
+   - Open `https://app.gyatso.me/indianhistorybite` in your browser
+   - You should see the historical story content
 
 2. **Edit the prompt to trigger generation:**
    ```bash
@@ -257,7 +255,7 @@ WARNING: API key protection is DISABLED (set APP_API_KEY)
 
 3. **Check the API directly:**
    ```bash
-   curl http://localhost:3001/indianhistorybite/api/result
+   curl https://app.gyatso.me/indianhistorybite/api/result
    ```
 
 4. **View logs:**
@@ -290,7 +288,7 @@ nano ../runtime/data/prompt.txt
 
 **Method 2: Use the refresh API** (requires APP_API_KEY)
 ```bash
-curl -X POST http://localhost:3001/indianhistorybite/api/refresh \
+curl -X POST https://app.gyatso.me/indianhistorybite/api/refresh \
   -H "x-api-key: your_app_api_key_here"
 ```
 
@@ -712,13 +710,13 @@ NODE_ENV=development
 
 ```bash
 # Test if server is running
-curl -I http://localhost:3001/indianhistorybite/
+curl -I https://app.gyatso.me/indianhistorybite/
 
 # Test API endpoint
-curl http://localhost:3001/indianhistorybite/api/result
+curl https://app.gyatso.me/indianhistorybite/api/result
 
 # Trigger manual refresh (requires APP_API_KEY)
-curl -X POST http://localhost:3001/indianhistorybite/api/refresh \
+curl -X POST https://app.gyatso.me/indianhistorybite/api/refresh \
   -H "x-api-key: your_key"
 ```
 
@@ -858,7 +856,7 @@ curl -X POST http://localhost:3001/indianhistorybite/api/refresh \
 **Solution**:
 ```bash
 # Update ALLOWED_ORIGINS in .env
-ALLOWED_ORIGINS=http://localhost:3001,http://yourdomain.com
+ALLOWED_ORIGINS=https://app.gyatso.me
 ```
 
 #### 6. Stories Not Displaying
