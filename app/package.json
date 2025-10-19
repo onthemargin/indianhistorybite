@@ -1,7 +1,7 @@
 {
-  "name": "claude-api-runner",
+  "name": "indianhistorybite",
   "version": "1.0.0",
-  "description": "Simple web app to run prompts against Claude API",
+  "description": "Daily bite-sized stories from Indian history using Claude API",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
