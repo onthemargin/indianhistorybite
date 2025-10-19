@@ -233,6 +233,13 @@
     </div>
 
     <script>
+        // Decode HTML entities
+        function decodeHTML(html) {
+            const txt = document.createElement('textarea');
+            txt.innerHTML = html;
+            return txt.value;
+        }
+
         // XSS Protection: Sanitize HTML content
         function sanitizeHTML(dirty) {
             if (typeof DOMPurify !== 'undefined') {
@@ -280,7 +287,9 @@
                 storyQuote.style.display = 'none';
             } else {
                 try {
-                    const storyData = JSON.parse(data.response);
+                    // Decode HTML entities before parsing JSON
+                    const decodedResponse = decodeHTML(data.response);
+                    const storyData = JSON.parse(decodedResponse);
                     
                     if (storyData.name && storyData.content) {
                         // Display the name prominently
