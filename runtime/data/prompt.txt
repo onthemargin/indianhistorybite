@@ -7,4 +7,13 @@ Tell me a story about a lesser-known historical figure from Indian history who c
   "shareableQuote": "An inspiring quote or key insight from the story that captures the essence of this historical figure."
 }
 
+IMPORTANT GUIDELINES:
+- Write a balanced, nuanced historical account. Avoid hagiography or overly heroic language.
+- Present both achievements and limitations/flaws of the historical figure
+- Include historical context and complexity - acknowledge controversies, failures, or contradictions
+- Use measured, scholarly language rather than dramatic or worshipful tone
+- Where applicable, mention different historical perspectives or debates about this figure
+- Focus on factual historical analysis rather than mythologizing
+- Acknowledge the ambiguity and complexity of historical interpretation
+
 Do not ask follow-up questions or provide additional commentary. Only return the JSON response.
