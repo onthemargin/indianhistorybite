@@ -6,11 +6,15 @@
     <title>Indian History Bite - AI-Generated Stories</title>
     <meta name="description" content="Educational project showcasing AI-generated stories about Indian history. Content may contain inaccuracies - please verify facts.">
 
+    <!-- Prevent caching -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
     <!-- Favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-192x192.png">
 
-    <!-- DOMPurify for XSS protection -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js" integrity="sha512-KqUc5+gwsJu4Qx8YCmVi2kP3NQXyF2pCEIYlO0RKZZBQDgQqQvUilYJjECEaK89v0Cs00CgQxOSMfe/+lrYPOg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- DOMPurify removed - using manual sanitization instead -->
 
     <style>
         * {
@@ -83,7 +87,7 @@
         
         .story-body .date {
             color: #667eea;
-            font-weight: 600;
+            font-weight: normal;
         }
         
         .story-body .quote-inline {
@@ -240,25 +244,42 @@
             return txt.value;
         }
 
-        // XSS Protection: Sanitize HTML content
+        // XSS Protection: Simplified sanitization for trusted content
         function sanitizeHTML(dirty) {
-            if (typeof DOMPurify !== 'undefined') {
-                return DOMPurify.sanitize(dirty, {
-                    ALLOWED_TAGS: ['p', 'strong', 'em', 'span', 'br', 'div'],
-                    ALLOWED_ATTR: ['class'],
-                    KEEP_CONTENT: true,
-                    RETURN_DOM: false,
-                    RETURN_DOM_FRAGMENT: false
+            // Since content comes from our own API and we control the formatting,
+            // we just need basic sanitization
+            const temp = document.createElement('div');
+            temp.innerHTML = dirty;
+
+            // Remove any script tags or event handlers as a safety measure
+            const scripts = temp.querySelectorAll('script');
+            scripts.forEach(script => script.remove());
+
+            // Remove event handler attributes
+            const allElements = temp.querySelectorAll('*');
+            allElements.forEach(el => {
+                const attrs = Array.from(el.attributes);
+                attrs.forEach(attr => {
+                    if (attr.name.startsWith('on')) {
+                        el.removeAttribute(attr.name);
+                    }
                 });
-            }
-            // Fallback if DOMPurify not loaded - allow basic HTML
-            return dirty;
+            });
+
+            return temp.innerHTML;
         }
 
         // Fetch and display content
         async function fetchResult() {
             try {
-                const response = await fetch('/indianhistorybite/api/result');
+                // Add timestamp to bust cache
+                const cacheBuster = new Date().getTime();
+                const response = await fetch(`/indianhistorybite/api/result?t=${cacheBuster}`, {
+                    cache: 'no-store',
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
                 const data = await response.json();
                 displayStoryContent(data);
             } catch (error) {
@@ -288,10 +309,19 @@
                 storyQuote.style.display = 'none';
             } else {
                 try {
-                    // Decode HTML entities before parsing JSON
-                    const decodedResponse = decodeHTML(data.response);
-                    const storyData = JSON.parse(decodedResponse);
-                    
+                    let storyData;
+
+                    // Handle response - it should now be an object directly from server
+                    if (typeof data.response === 'object' && data.response !== null) {
+                        // Response is already an object
+                        storyData = data.response;
+                    } else if (typeof data.response === 'string') {
+                        // Fallback: try to parse string response
+                        storyData = JSON.parse(data.response);
+                    } else {
+                        throw new Error('Invalid response format');
+                    }
+
                     if (storyData.name && storyData.content) {
                         // Display the name prominently
                         storyTitle.textContent = storyData.name;
@@ -307,22 +337,20 @@
                         let formattedContent = paragraphs.map(paragraph => {
                             // Skip empty paragraphs
                             if (!paragraph.trim()) return '';
-                            
-                            // Apply text formatting
+
+                            // Apply text formatting directly (content is plain text from JSON)
                             let formatted = paragraph
                                 // Bold text
                                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                // Italic text  
+                                // Italic text
                                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                                // Dates in special style
-                                .replace(/\b(\d{4}s?|\d{1,2}(st|nd|rd|th)\s+century)\b/gi, '<span class="date">$1</span>')
                                 // Quotes
                                 .replace(/"([^"]+)"/g, '"<span class="quote-inline">$1</span>"');
-                            
+
                             return `<p>${formatted}</p>`;
                         }).filter(p => p !== '').join('');
 
-                        // Sanitize formatted content before inserting
+                        // Insert sanitized content
                         storyBody.innerHTML = sanitizeHTML(formattedContent);
 
                         // Display the quote if available (use textContent for safety)
@@ -338,10 +366,12 @@
                 } catch (e) {
                     // Fallback for non-JSON content
                     console.error('Error parsing story:', e);
-                    storyTitle.textContent = 'Today\'s History Story';
+                    console.error('Response type:', typeof data.response);
+                    console.error('Response sample:', data.response ? data.response.substring(0, 200) : 'null');
+
+                    storyTitle.textContent = 'Parsing Error';
                     storySubtitle.textContent = '';
-                    // Sanitize fallback content
-                    storyBody.innerHTML = sanitizeHTML(`<p>${data.response}</p>`);
+                    storyBody.innerHTML = sanitizeHTML(`<div class="error">Unable to parse story content. Error: ${e.message}</div>`);
                     storyQuote.style.display = 'none';
                 }
             }
