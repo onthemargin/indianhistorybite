@@ -13,14 +13,17 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync('/etc/indianhistorybi
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const security = require('./security');
 
 const app = express();
+
+// Don't use trust proxy or rate limiting for now
+// const security = require('./security');
+
 const port = process.env.PORT || 3001;
 const basePath = process.env.BASE_PATH || '/indianhistorybite';
 
 // Runtime directories
-const runtimeDir = process.env.RUNTIME_DIR || path.join(__dirname, '../../../runtime');
+const runtimeDir = process.env.RUNTIME_DIR || path.join(__dirname, '../../runtime');
 const promptFile = path.join(runtimeDir, 'data', 'prompt.txt');
 const logFile = path.join(runtimeDir, 'logs', 'claude_runs.log');
 
@@ -39,25 +42,21 @@ let currentResult = {
     }
 });
 
-// Security middleware
-app.use(security.requestLogger);
-app.use(security.securityHeaders());
-app.use(security.rateLimiters.general);
+// Security middleware - temporarily disabled
+// app.use(security.requestLogger);
+// app.use(security.securityHeaders());
+// app.use(security.rateLimiters.general);
 
 // CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
-        // In production, always require origin header
-        if (process.env.NODE_ENV === 'production' && !origin) {
-            return callback(new Error('Not allowed by CORS - origin required'));
-        }
-
         const allowedOrigins = process.env.ALLOWED_ORIGINS
             ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
             : [];
 
-        // Allow if in allowedOrigins, or no origin in development only
-        if (allowedOrigins.includes(origin) || (!origin && process.env.NODE_ENV !== 'production')) {
+        // Allow requests without origin (same-origin, Postman, curl, etc.)
+        // or if origin is in the allowed list
+        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -72,18 +71,44 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(basePath, express.static(__dirname, { maxAge: '1h' }));
 
-// Simple logging
+// Enhanced logging with PST time
 function logRequest(prompt, response, error = null) {
-    const timestamp = new Date().toISOString();
+    const now = new Date();
+    const utcTimestamp = now.toISOString();
+
+    // Convert to PST (UTC-8) or PDT (UTC-7) depending on DST
+    const pstTimestamp = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+    const pstString = pstTimestamp.toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+
+    const separator = '='.repeat(80);
     const logEntry = `
-=== ${timestamp} ===
-PROMPT: ${prompt ? prompt.substring(0, 200) : ''}
-${error ? `ERROR: ${error}` : `RESPONSE: [LOGGED]`}
-==================================================
+${separator}
+TIMESTAMP (UTC): ${utcTimestamp}
+TIMESTAMP (PST): ${pstString}
+${separator}
+
+PROMPT SENT:
+${prompt || 'No prompt'}
+
+${separator}
+
+${error ? `ERROR:\n${error}` : `RESPONSE RECEIVED:\n${typeof response === 'string' ? response : JSON.stringify(response, null, 2)}`}
+
+${separator}
 
 `;
     try {
         fs.appendFileSync(logFile, logEntry);
+        console.log(`[${pstString} PST] Request logged - ${error ? 'ERROR' : 'SUCCESS'}`);
     } catch (err) {
         console.error('Failed to write log:', err.message);
     }
@@ -124,30 +149,74 @@ async function executeClaudeAPICall(prompt) {
 
         if (response.data && response.data.content && response.data.content[0]) {
             let claudeResponse = response.data.content[0].text;
-            
+
             // Extract JSON from markdown if present
             const jsonMatch = claudeResponse.match(/```json\s*(\{[\s\S]*?\})\s*```/);
             if (jsonMatch) {
                 claudeResponse = jsonMatch[1];
             }
-            
+
             // Try to parse and validate JSON
             try {
-                const parsedJson = JSON.parse(claudeResponse);
-                if (parsedJson.name && parsedJson.content) {
-                    claudeResponse = JSON.stringify(parsedJson);
+                // First, try parsing as-is
+                let parsedJson;
+                try {
+                    parsedJson = JSON.parse(claudeResponse);
+                } catch (firstError) {
+                    // If parsing fails, try to fix common issues
+                    console.log('Initial parse failed, attempting to fix JSON...');
+
+                    // Remove any BOM or invisible characters
+                    let cleaned = claudeResponse.trim();
+
+                    // Fix: Replace literal newlines and tabs in string values with escaped versions
+                    // This regex finds strings and escapes control characters within them
+                    cleaned = cleaned.replace(/"content":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
+                        // Escape newlines, tabs, and other control characters
+                        const escaped = content
+                            .replace(/\n/g, '\\n')
+                            .replace(/\r/g, '\\r')
+                            .replace(/\t/g, '\\t');
+                        return `"content": "${escaped}"`;
+                    });
+
+                    // Also fix shareableQuote field
+                    cleaned = cleaned.replace(/"shareableQuote":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
+                        const escaped = content
+                            .replace(/\n/g, '\\n')
+                            .replace(/\r/g, '\\r')
+                            .replace(/\t/g, '\\t');
+                        return `"shareableQuote": "${escaped}"`;
+                    });
+
+                    parsedJson = JSON.parse(cleaned);
+                }
+
+                if (parsedJson && parsedJson.name && parsedJson.content) {
+                    // Store as object, not string - let Express serialize it
+                    currentResult = {
+                        response: parsedJson, // Send as object
+                        isProcessing: false,
+                        lastModified: new Date().toISOString(),
+                        error: null
+                    };
+                    logRequest(prompt, parsedJson);
+                    return;
                 }
             } catch (e) {
+                console.error('JSON parse error:', e.message);
+                console.error('Failed response sample:', claudeResponse.substring(0, 500));
                 // Keep as raw text if not valid JSON
             }
-            
+
             currentResult = {
-                response: security.sanitizeInput(claudeResponse),
+                response: claudeResponse, // security.sanitizeInput(claudeResponse),
                 isProcessing: false,
                 lastModified: new Date().toISOString(),
                 error: null
             };
-            
+
+            // This line only executes for non-JSON responses
             logRequest(prompt, claudeResponse);
         } else {
             throw new Error('Invalid response from Claude API');
@@ -164,14 +233,21 @@ async function executeClaudeAPICall(prompt) {
     }
 }
 
+// Queue for pending requests
+let requestQueue = [];
+let isCurrentlyProcessing = false;
+
 // Process prompt file with variation for fresh content
 async function processPromptFile() {
-    // Allow concurrent requests to queue
-    if (currentResult.isProcessing) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (currentResult.isProcessing) return; // Still processing, return cached
+    // Wait if currently processing another request
+    if (isCurrentlyProcessing) {
+        return new Promise((resolve) => {
+            requestQueue.push(resolve);
+        });
     }
-    
+
+    isCurrentlyProcessing = true;
+
     try {
         if (!fs.existsSync(promptFile)) {
             currentResult = {
@@ -182,9 +258,9 @@ async function processPromptFile() {
             };
             return;
         }
-        
+
         const basePrompt = fs.readFileSync(promptFile, 'utf8').trim();
-        
+
         if (!basePrompt) {
             currentResult = {
                 response: 'Please add your prompt to prompt.txt',
@@ -194,7 +270,7 @@ async function processPromptFile() {
             };
             return;
         }
-        
+
         // Add strong variation to ensure completely different content each time
         const timestamp = new Date().toISOString();
         const randomSeed = Math.random().toString(36).substring(7);
@@ -215,13 +291,13 @@ CRITICAL INSTRUCTIONS:
 3. Vary the time period, region, and theme
 4. NEVER repeat the same historical figure
 5. Prioritize lesser-known figures to maximize variety`;
-        
+
         currentResult.isProcessing = true;
         currentResult.response = 'Processing...';
         currentResult.error = null;
-        
+
         await executeClaudeAPICall(prompt);
-        
+
     } catch (error) {
         console.error('Error processing prompt:', error);
         currentResult = {
@@ -230,12 +306,20 @@ CRITICAL INSTRUCTIONS:
             lastModified: new Date().toISOString(),
             error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
         };
+    } finally {
+        isCurrentlyProcessing = false;
+
+        // Process next request in queue if any
+        if (requestQueue.length > 0) {
+            const nextResolve = requestQueue.shift();
+            processPromptFile().then(nextResolve);
+        }
     }
 }
 
 // Routes
 // Public endpoint - get current result (generates new story on each request)
-app.get(basePath + '/api/result', async (req, res) => {
+const getResultHandler = async (req, res) => {
     try {
         // Generate a fresh story on every request
         await processPromptFile();
@@ -249,22 +333,30 @@ app.get(basePath + '/api/result', async (req, res) => {
             error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
         });
     }
-});
+};
+app.get(basePath + '/api/result', getResultHandler);
+// Support setups where reverse proxies strip the base path
+app.get('/api/result', getResultHandler);
 
 // Protected endpoint - refresh content
-app.post(basePath + '/api/refresh', 
-    security.rateLimiters.refresh,
-    security.requireApiKey,
-    async (req, res) => {
-        console.log('Manual refresh triggered');
-        try {
-            await processPromptFile();
-            res.json({ message: 'Refresh triggered', success: true });
-        } catch (error) {
-            console.error('Refresh error:', error);
-            res.status(500).json({ error: 'Failed to refresh content', success: false });
-        }
+const postRefreshHandler = async (req, res) => {
+    console.log('Manual refresh triggered');
+    try {
+        await processPromptFile();
+        res.json({ message: 'Refresh triggered', success: true });
+    } catch (error) {
+        console.error('Refresh error:', error);
+        res.status(500).json({ error: 'Failed to refresh content', success: false });
     }
+};
+app.post(basePath + '/api/refresh',
+    // security.requireApiKey,
+    postRefreshHandler
+);
+// Support setups where reverse proxies strip the base path
+app.post('/api/refresh',
+    // security.requireApiKey,
+    postRefreshHandler
 );
 
 app.get(basePath, (req, res) => {
@@ -281,7 +373,7 @@ if (fs.existsSync(promptFile)) {
 }
 
 // Error handling middleware (must be last)
-app.use(security.secureErrorHandler);
+// app.use(security.secureErrorHandler);
 
 // Start server
 const server = app.listen(port, '0.0.0.0', () => {

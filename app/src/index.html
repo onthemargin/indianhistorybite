@@ -269,18 +269,45 @@
             return temp.innerHTML;
         }
 
-        // Fetch and display content
+        // Determine base path from current URL (supports nested deploys)
+        function getBasePath() {
+            const path = window.location.pathname;
+            const parts = path.split('/').filter(Boolean);
+            return parts.length > 0 ? `/${parts[0]}` : '';
+        }
+
+        // Fetch and display content with robust parsing
         async function fetchResult() {
             try {
-                // Add timestamp to bust cache
                 const cacheBuster = new Date().getTime();
-                const response = await fetch(`/indianhistorybite/api/result?t=${cacheBuster}`, {
+                const base = getBasePath() || '/indianhistorybite';
+                const url = `${base}/api/result?t=${cacheBuster}`;
+                const response = await fetch(url, {
                     cache: 'no-store',
                     headers: {
                         'Cache-Control': 'no-cache'
                     }
                 });
-                const data = await response.json();
+
+                const contentType = response.headers.get('content-type') || '';
+                if (!response.ok) {
+                    let bodyText = '';
+                    try { bodyText = await response.text(); } catch (_) {}
+                    throw new Error(`HTTP ${response.status} ${response.statusText} - ${bodyText.slice(0, 200)}`);
+                }
+
+                let data;
+                if (contentType.includes('application/json') || contentType.includes('json')) {
+                    data = await response.json();
+                } else {
+                    const text = await response.text();
+                    try {
+                        data = JSON.parse(text);
+                    } catch (_) {
+                        throw new Error(`Expected JSON but received ${contentType || 'unknown'}: ${text.slice(0, 200)}`);
+                    }
+                }
+
                 displayStoryContent(data);
             } catch (error) {
                 document.getElementById('story-title').textContent = 'Connection Error';
