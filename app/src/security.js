@@ -50,8 +50,8 @@ const securityHeaders = () => {
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
-                styleSrc: ["'self'", "'unsafe-inline'"], // Required for inline styles
-                scriptSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com"], // Allow DOMPurify CDN
+                styleSrc: ["'self'"],
+                scriptSrc: ["'self'"],
                 imgSrc: ["'self'", "data:", "https:"],
                 connectSrc: ["'self'"],
                 fontSrc: ["'self'"],
