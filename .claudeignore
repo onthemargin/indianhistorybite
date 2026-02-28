@@ -1,0 +1,22 @@
+# Secrets and credentials - never send to Claude API
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+*.secrets
+*secret*
+*credential*
+*password*
+*api_key*
+
+# Runtime logs contain full prompts and API responses
+runtime/logs/
+runtime/data/
+
+# npm auth token
+.npmrc
+.netrc
