@@ -18,6 +18,7 @@ const app = express();
 const security = require('./security');
 
 app.disable('x-powered-by');
+app.set('trust proxy', 1); // nginx is the only proxy; enables real client IP for rate limiting
 
 const port = process.env.PORT || 3001;
 const basePath = process.env.BASE_PATH || '/indianhistorybite';
@@ -62,7 +63,6 @@ const corsOptions = {
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true,
     maxAge: 86400 // Cache preflight requests for 24 hours
 };
 
