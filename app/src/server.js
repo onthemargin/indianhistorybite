@@ -15,9 +15,9 @@ const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
+const security = require('./security');
 
-// Don't use trust proxy or rate limiting for now
-// const security = require('./security');
+app.disable('x-powered-by');
 
 const port = process.env.PORT || 3001;
 const basePath = process.env.BASE_PATH || '/indianhistorybite';
@@ -42,10 +42,10 @@ let currentResult = {
     }
 });
 
-// Security middleware - temporarily disabled
-// app.use(security.requestLogger);
-// app.use(security.securityHeaders());
-// app.use(security.rateLimiters.general);
+// Security middleware
+app.use(security.requestLogger);
+app.use(security.securityHeaders());
+app.use(security.rateLimiters.general);
 
 // CORS configuration
 const corsOptions = {
@@ -69,7 +69,7 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
-app.use(basePath, express.static(__dirname, { maxAge: '1h' }));
+app.use(basePath, express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
 // Enhanced logging with PST time
 function logRequest(prompt, response, error = null) {
@@ -350,21 +350,21 @@ const postRefreshHandler = async (req, res) => {
     }
 };
 app.post(basePath + '/api/refresh',
-    // security.requireApiKey,
+    security.requireApiKey,
     postRefreshHandler
 );
 // Support setups where reverse proxies strip the base path
 app.post('/api/refresh',
-    // security.requireApiKey,
+    security.requireApiKey,
     postRefreshHandler
 );
 
 app.get(basePath, (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get(basePath + '/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Initial processing
@@ -373,10 +373,10 @@ if (fs.existsSync(promptFile)) {
 }
 
 // Error handling middleware (must be last)
-// app.use(security.secureErrorHandler);
+app.use(security.secureErrorHandler);
 
 // Start server
-const server = app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, '127.0.0.1', () => {
     console.log(`Server running at http://localhost:${port}`);
     console.log(`Access the app at ${basePath}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
