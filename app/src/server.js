@@ -133,7 +133,7 @@ async function executeClaudeAPICall(prompt) {
         const response = await axios.post(
             'https://api.anthropic.com/v1/messages',
             {
-                model: 'claude-3-5-haiku-20241022',
+                model: 'claude-haiku-4-5-20251001',
                 max_tokens: 4000,
                 messages: [{ role: 'user', content: prompt }]
             },
