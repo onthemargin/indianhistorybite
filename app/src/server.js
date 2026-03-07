@@ -23,25 +23,16 @@ app.set('trust proxy', 1); // nginx is the only proxy; enables real client IP fo
 const port = process.env.PORT || 3001;
 const basePath = process.env.BASE_PATH || '/indianhistorybite';
 
-// Runtime directories
-const runtimeDir = process.env.RUNTIME_DIR || path.join(__dirname, '../../runtime');
-const promptFile = path.join(runtimeDir, 'data', 'prompt.txt');
-const logFile = path.join(runtimeDir, 'logs', 'claude_runs.log');
+// Prompt template from environment variable
+const promptText = process.env.PROMPT_TEXT || '';
 
 // Store current result
 let currentResult = {
-    response: 'Waiting for prompt... Edit prompt.txt and save to see results here.',
+    response: 'Waiting for prompt...',
     isProcessing: false,
     lastModified: null,
     error: null
 };
-
-// Ensure directories exist
-[path.dirname(promptFile), path.dirname(logFile)].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-});
 
 // Security middleware
 app.use(security.requestLogger);
@@ -71,46 +62,17 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(basePath, express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
-// Enhanced logging with PST time
+// Log to stdout/stderr — captured by Cloud Logging
 function logRequest(prompt, response, error = null) {
-    const now = new Date();
-    const utcTimestamp = now.toISOString();
-
-    // Convert to PST (UTC-8) or PDT (UTC-7) depending on DST
-    const pstTimestamp = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-    const pstString = pstTimestamp.toLocaleString('en-US', {
-        timeZone: 'America/Los_Angeles',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-    });
-
-    const separator = '='.repeat(80);
-    const logEntry = `
-${separator}
-TIMESTAMP (UTC): ${utcTimestamp}
-TIMESTAMP (PST): ${pstString}
-${separator}
-
-PROMPT SENT:
-${prompt || 'No prompt'}
-
-${separator}
-
-${error ? `ERROR:\n${error}` : `RESPONSE RECEIVED:\n${typeof response === 'string' ? response : JSON.stringify(response, null, 2)}`}
-
-${separator}
-
-`;
-    try {
-        fs.appendFileSync(logFile, logEntry);
-        console.log(`[${pstString} PST] Request logged - ${error ? 'ERROR' : 'SUCCESS'}`);
-    } catch (err) {
-        console.error('Failed to write log:', err.message);
+    const entry = {
+        timestamp: new Date().toISOString(),
+        prompt: prompt || null,
+        ...(error ? { error } : { response }),
+    };
+    if (error) {
+        console.error(JSON.stringify(entry));
+    } else {
+        console.log(JSON.stringify(entry));
     }
 }
 
@@ -249,24 +211,14 @@ async function processPromptFile() {
     isCurrentlyProcessing = true;
 
     try {
-        if (!fs.existsSync(promptFile)) {
-            currentResult = {
-                response: 'prompt.txt file not found',
-                isProcessing: false,
-                lastModified: null,
-                error: 'File not found'
-            };
-            return;
-        }
-
-        const basePrompt = fs.readFileSync(promptFile, 'utf8').trim();
+        const basePrompt = promptText.trim();
 
         if (!basePrompt) {
             currentResult = {
-                response: 'Please add your prompt to prompt.txt',
+                response: 'PROMPT_TEXT environment variable is not set',
                 isProcessing: false,
                 lastModified: null,
-                error: null
+                error: 'Prompt not configured'
             };
             return;
         }
@@ -367,10 +319,7 @@ app.get(basePath + '/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Initial processing
-if (fs.existsSync(promptFile)) {
-    processPromptFile();
-}
+// No startup processing — every request to /api/result generates fresh content
 
 // Error handling middleware (must be last)
 app.use(security.secureErrorHandler);
