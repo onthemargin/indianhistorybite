@@ -48,4 +48,4 @@ secrets.json
 credentials.json
 
 # Claude Code specific
-.claude/
+.claude/.claudeignore
