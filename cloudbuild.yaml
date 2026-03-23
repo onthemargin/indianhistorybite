@@ -1,0 +1,10 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - builds
+      - triggers
+      - run
+      - $_DEPLOY_TRIGGER
+      - --branch=main
+      - --project=$_DEPLOY_PROJECT
