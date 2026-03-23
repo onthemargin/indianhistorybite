@@ -37,12 +37,11 @@ function getBasePath() {
     return parts.length > 0 ? `/${parts[0]}` : '';
 }
 
-// Fetch and display content with robust parsing
+// Fetch and display the stored daily content with robust parsing
 async function fetchResult() {
     try {
-        const cacheBuster = new Date().getTime();
         const base = getBasePath() || '/indianhistorybite';
-        const url = `${base}/api/result?t=${cacheBuster}`;
+        const url = `${base}/api/result`;
         const response = await fetch(url, {
             cache: 'no-store',
             headers: {
@@ -51,11 +50,6 @@ async function fetchResult() {
         });
 
         const contentType = response.headers.get('content-type') || '';
-        if (!response.ok) {
-            let bodyText = '';
-            try { bodyText = await response.text(); } catch (_) {}
-            throw new Error(`HTTP ${response.status} ${response.statusText} - ${bodyText.slice(0, 200)}`);
-        }
 
         let data;
         if (contentType.includes('application/json') || contentType.includes('json')) {
@@ -67,6 +61,10 @@ async function fetchResult() {
             } catch (_) {
                 throw new Error(`Expected JSON but received ${contentType || 'unknown'}: ${text.slice(0, 200)}`);
             }
+        }
+
+        if (!response.ok) {
+            throw new Error(data.error || `HTTP ${response.status} ${response.statusText}`);
         }
 
         displayStoryContent(data);
