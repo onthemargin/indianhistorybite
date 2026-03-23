@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs/promises');
 
 // Load environment variables
 // Try production path first, fall back to local .env
@@ -26,13 +27,20 @@ const basePath = process.env.BASE_PATH || '/indianhistorybite';
 // Prompt template from environment variable
 const promptText = process.env.PROMPT_TEXT || '';
 
+const runtimeDataDir = path.resolve(__dirname, '../../runtime/data');
+const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
+
+function createEmptyCurrentResult() {
+    return {
+        response: 'No daily story has been generated yet',
+        isProcessing: false,
+        lastModified: null,
+        error: null
+    };
+}
+
 // Store current result
-let currentResult = {
-    response: 'Waiting for prompt...',
-    isProcessing: false,
-    lastModified: null,
-    error: null
-};
+let currentResult = createEmptyCurrentResult();
 
 // Security middleware
 app.use(security.requestLogger);
@@ -81,14 +89,8 @@ async function executeClaudeAPICall(prompt) {
     const apiKey = process.env.CLAUDE_API_KEY;
     if (!apiKey) {
         const error = 'CLAUDE_API_KEY not configured';
-        currentResult = {
-            response: 'API key not configured',
-            isProcessing: false,
-            lastModified: new Date().toISOString(),
-            error: error
-        };
         logRequest(prompt, null, error);
-        return;
+        throw new Error(error);
     }
 
     try {
@@ -109,207 +111,249 @@ async function executeClaudeAPICall(prompt) {
             }
         );
 
-        if (response.data && response.data.content && response.data.content[0]) {
-            let claudeResponse = response.data.content[0].text;
-
-            // Extract JSON from markdown if present
-            const jsonMatch = claudeResponse.match(/```json\s*(\{[\s\S]*?\})\s*```/);
-            if (jsonMatch) {
-                claudeResponse = jsonMatch[1];
-            }
-
-            // Try to parse and validate JSON
-            try {
-                // First, try parsing as-is
-                let parsedJson;
-                try {
-                    parsedJson = JSON.parse(claudeResponse);
-                } catch (firstError) {
-                    // If parsing fails, try to fix common issues
-                    console.log('Initial parse failed, attempting to fix JSON...');
-
-                    // Remove any BOM or invisible characters
-                    let cleaned = claudeResponse.trim();
-
-                    // Fix: Replace literal newlines and tabs in string values with escaped versions
-                    // This regex finds strings and escapes control characters within them
-                    cleaned = cleaned.replace(/"content":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
-                        // Escape newlines, tabs, and other control characters
-                        const escaped = content
-                            .replace(/\n/g, '\\n')
-                            .replace(/\r/g, '\\r')
-                            .replace(/\t/g, '\\t');
-                        return `"content": "${escaped}"`;
-                    });
-
-                    // Also fix shareableQuote field
-                    cleaned = cleaned.replace(/"shareableQuote":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
-                        const escaped = content
-                            .replace(/\n/g, '\\n')
-                            .replace(/\r/g, '\\r')
-                            .replace(/\t/g, '\\t');
-                        return `"shareableQuote": "${escaped}"`;
-                    });
-
-                    parsedJson = JSON.parse(cleaned);
-                }
-
-                if (parsedJson && parsedJson.name && parsedJson.content) {
-                    // Store as object, not string - let Express serialize it
-                    currentResult = {
-                        response: parsedJson, // Send as object
-                        isProcessing: false,
-                        lastModified: new Date().toISOString(),
-                        error: null
-                    };
-                    logRequest(prompt, parsedJson);
-                    return;
-                }
-            } catch (e) {
-                console.error('JSON parse error:', e.message);
-                console.error('Failed response sample:', claudeResponse.substring(0, 500));
-                // Keep as raw text if not valid JSON
-            }
-
-            currentResult = {
-                response: claudeResponse, // security.sanitizeInput(claudeResponse),
-                isProcessing: false,
-                lastModified: new Date().toISOString(),
-                error: null
-            };
-
-            // This line only executes for non-JSON responses
-            logRequest(prompt, claudeResponse);
-        } else {
+        if (!response.data || !response.data.content || !response.data.content[0]) {
             throw new Error('Invalid response from Claude API');
         }
+
+        let claudeResponse = response.data.content[0].text;
+
+        // Extract JSON from markdown if present
+        const jsonMatch = claudeResponse.match(/```json\s*(\{[\s\S]*?\})\s*```/);
+        if (jsonMatch) {
+            claudeResponse = jsonMatch[1];
+        }
+
+        // Try to parse and validate JSON
+        try {
+            let parsedJson;
+            try {
+                parsedJson = JSON.parse(claudeResponse);
+            } catch (firstError) {
+                console.log('Initial parse failed, attempting to fix JSON...');
+
+                let cleaned = claudeResponse.trim();
+                cleaned = cleaned.replace(/"content":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
+                    const escaped = content
+                        .replace(/\n/g, '\\n')
+                        .replace(/\r/g, '\\r')
+                        .replace(/\t/g, '\\t');
+                    return `"content": "${escaped}"`;
+                });
+                cleaned = cleaned.replace(/"shareableQuote":\s*"((?:[^"\\]|\\.)*)"/gs, (match, content) => {
+                    const escaped = content
+                        .replace(/\n/g, '\\n')
+                        .replace(/\r/g, '\\r')
+                        .replace(/\t/g, '\\t');
+                    return `"shareableQuote": "${escaped}"`;
+                });
+
+                parsedJson = JSON.parse(cleaned);
+            }
+
+            if (parsedJson && parsedJson.name && parsedJson.content) {
+                logRequest(prompt, parsedJson);
+                return parsedJson;
+            }
+        } catch (e) {
+            console.error('JSON parse error:', e.message);
+            console.error('Failed response sample:', claudeResponse.substring(0, 500));
+        }
+
+        logRequest(prompt, claudeResponse);
+        throw new Error('Claude API did not return a valid story JSON payload');
     } catch (error) {
         console.error('Claude API error:', error.message);
-        currentResult = {
-            response: 'Error processing request',
-            isProcessing: false,
-            lastModified: new Date().toISOString(),
-            error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
-        };
         logRequest(prompt, null, error.message);
+        throw error;
     }
 }
 
+async function ensureRuntimeDataDir() {
+    await fsp.mkdir(runtimeDataDir, { recursive: true });
+}
+
+async function saveDailyStory(storyRecord) {
+    await ensureRuntimeDataDir();
+    await fsp.writeFile(currentStoryPath, JSON.stringify(storyRecord, null, 2));
+}
+
+async function loadDailyStoryFromStorage() {
+    try {
+        const raw = await fsp.readFile(currentStoryPath, 'utf8');
+        return JSON.parse(raw);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return null;
+        }
+        throw error;
+    }
+}
+
+function setCurrentResultFromStoryRecord(storyRecord) {
+    currentResult = {
+        response: storyRecord.story,
+        isProcessing: false,
+        lastModified: storyRecord.generatedAt,
+        error: null,
+        storyDateKey: storyRecord.storyDateKey,
+        generatedAt: storyRecord.generatedAt,
+        notificationSent: Boolean(storyRecord.notificationSent)
+    };
+    return currentResult;
+}
+
+function setCurrentResultError(message, internalError) {
+    currentResult = {
+        response: message,
+        isProcessing: false,
+        lastModified: new Date().toISOString(),
+        error: internalError
+    };
+    return currentResult;
+}
 // Queue for pending requests
 let requestQueue = [];
 let isCurrentlyProcessing = false;
 
-// Process prompt file with variation for fresh content
-async function processPromptFile() {
-    // Wait if currently processing another request
+async function generateAndStoreDailyStory(options = {}) {
     if (isCurrentlyProcessing) {
-        return new Promise((resolve) => {
-            requestQueue.push(resolve);
+        return new Promise((resolve, reject) => {
+            requestQueue.push({ resolve, reject, options });
         });
     }
 
     isCurrentlyProcessing = true;
+    currentResult = {
+        ...currentResult,
+        isProcessing: true,
+        error: null
+    };
 
     try {
         const basePrompt = promptText.trim();
-
         if (!basePrompt) {
-            currentResult = {
-                response: 'PROMPT_TEXT environment variable is not set',
-                isProcessing: false,
-                lastModified: null,
-                error: 'Prompt not configured'
-            };
-            return;
+            throw new Error('PROMPT_TEXT environment variable is not set');
         }
 
-        // Add strong variation to ensure completely different content each time
-        const timestamp = new Date().toISOString();
-        const randomSeed = Math.random().toString(36).substring(7);
+        const generationTimestamp = new Date();
+        const generatedAt = generationTimestamp.toISOString();
+        const storyDateKey = options.storyDateKey || generatedAt.slice(0, 10);
+        const randomSeed = Math.random().toString(36).substring(2, 10);
         const uniqueId = Date.now() + Math.random();
         const randomNumber = Math.floor(Math.random() * 1000000);
 
         const prompt = `${basePrompt}
 
-Generation Metadata (use this to ensure uniqueness):
+Generation Metadata:
+- Story Date Key: ${storyDateKey}
 - Generation ID: ${randomSeed}
-- Timestamp: ${timestamp}
+- Timestamp: ${generatedAt}
 - Unique Request ID: ${uniqueId}
 - Random Seed: ${randomNumber}
 
 CRITICAL INSTRUCTIONS:
-1. Generate a story about a COMPLETELY DIFFERENT historical figure than any previous generation
-2. Use the random seed above to select a unique figure
-3. Vary the time period, region, and theme
-4. NEVER repeat the same historical figure
-5. Prioritize lesser-known figures to maximize variety`;
+1. Generate exactly one story for the provided story date key
+2. Return valid JSON with name, title, content, and shareableQuote fields
+3. The response must be suitable for saving as the daily featured story`;
 
-        currentResult.isProcessing = true;
-        currentResult.response = 'Processing...';
-        currentResult.error = null;
-
-        await executeClaudeAPICall(prompt);
-
-    } catch (error) {
-        console.error('Error processing prompt:', error);
-        currentResult = {
-            response: 'Error processing request',
-            isProcessing: false,
-            lastModified: new Date().toISOString(),
-            error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
+        const storyPayload = await executeClaudeAPICall(prompt);
+        const storyRecord = {
+            story: {
+                name: storyPayload.name,
+                title: storyPayload.title || '',
+                content: storyPayload.content,
+                shareableQuote: storyPayload.shareableQuote || ''
+            },
+            generatedAt,
+            storyDateKey,
+            notificationSent: options.notificationSent ?? false
         };
+
+        await saveDailyStory(storyRecord);
+        return setCurrentResultFromStoryRecord(storyRecord);
+    } catch (error) {
+        setCurrentResultError(
+            'Error generating daily story',
+            process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
+        );
+        throw error;
     } finally {
         isCurrentlyProcessing = false;
-
-        // Process next request in queue if any
         if (requestQueue.length > 0) {
-            const nextResolve = requestQueue.shift();
-            processPromptFile().then(nextResolve);
+            const nextRequest = requestQueue.shift();
+            generateAndStoreDailyStory(nextRequest.options)
+                .then(nextRequest.resolve)
+                .catch(nextRequest.reject);
         }
     }
 }
 
+async function initializeCurrentStory() {
+    try {
+        const storedStory = await loadDailyStoryFromStorage();
+        if (storedStory) {
+            setCurrentResultFromStoryRecord(storedStory);
+            console.log(`Loaded current daily story for ${storedStory.storyDateKey}`);
+        } else {
+            currentResult = createEmptyCurrentResult();
+            console.log('No stored daily story found on startup');
+        }
+    } catch (error) {
+        console.error('Failed to load stored daily story:', error.message);
+        setCurrentResultError(
+            'Stored daily story could not be loaded',
+            process.env.NODE_ENV === 'production' ? 'Storage load failed' : error.message
+        );
+    }
+}
+
 // Routes
-// Public endpoint - get current result (generates new story on each request)
+// Public endpoint - get current stored result only
 const getResultHandler = async (req, res) => {
     try {
-        // Generate a fresh story on every request
-        await processPromptFile();
-        res.json(currentResult);
+        const storedStory = await loadDailyStoryFromStorage();
+        if (storedStory) {
+            return res.json(setCurrentResultFromStoryRecord(storedStory));
+        }
+
+        return res.status(404).json({
+            ...createEmptyCurrentResult(),
+            error: 'No daily story has been generated yet'
+        });
     } catch (error) {
-        console.error('Error generating story:', error);
-        res.status(500).json({
-            response: 'Error generating story',
+        console.error('Error loading stored story:', error);
+        return res.status(500).json({
+            response: 'Error loading stored story',
             isProcessing: false,
             lastModified: new Date().toISOString(),
-            error: process.env.NODE_ENV === 'production' ? 'Processing failed' : error.message
+            error: process.env.NODE_ENV === 'production' ? 'Storage load failed' : error.message
         });
     }
 };
 app.get(basePath + '/api/result', getResultHandler);
-// Support setups where reverse proxies strip the base path
 app.get('/api/result', getResultHandler);
 
-// Protected endpoint - refresh content
+// Protected endpoint - generate and persist the next daily story
 const postRefreshHandler = async (req, res) => {
-    console.log('Manual refresh triggered');
+    console.log('Manual daily story generation triggered');
     try {
-        await processPromptFile();
-        res.json({ message: 'Refresh triggered', success: true });
+        const result = await generateAndStoreDailyStory({
+            storyDateKey: req.body && req.body.storyDateKey,
+            notificationSent: req.body && typeof req.body.notificationSent === 'boolean'
+                ? req.body.notificationSent
+                : false
+        });
+        res.json({ message: 'Daily story generated', success: true, result });
     } catch (error) {
-        console.error('Refresh error:', error);
-        res.status(500).json({ error: 'Failed to refresh content', success: false });
+        console.error('Daily story generation error:', error);
+        res.status(500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Failed to generate daily story' : error.message,
+            success: false
+        });
     }
 };
-app.post(basePath + '/api/refresh',
-    security.requireApiKey,
-    postRefreshHandler
-);
-// Support setups where reverse proxies strip the base path
-app.post('/api/refresh',
-    security.requireApiKey,
-    postRefreshHandler
-);
+app.post(basePath + '/api/refresh', security.requireApiKey, postRefreshHandler);
+app.post('/api/refresh', security.requireApiKey, postRefreshHandler);
 
 app.get(basePath, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -319,7 +363,7 @@ app.get(basePath + '/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// No startup processing — every request to /api/result generates fresh content
+initializeCurrentStory();
 
 // Error handling middleware (must be last)
 app.use(security.secureErrorHandler);
