@@ -8,3 +8,6 @@ steps:
       - $_DEPLOY_TRIGGER
       - --branch=main
       - --project=$_DEPLOY_PROJECT
+
+options:
+  logging: CLOUD_LOGGING_ONLY
