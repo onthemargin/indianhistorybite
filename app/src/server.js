@@ -99,7 +99,8 @@ async function executeClaudeAPICall(prompt) {
             {
                 model: 'claude-haiku-4-5-20251001',
                 max_tokens: 4000,
-                messages: [{ role: 'user', content: prompt }]
+                system: prompt.split('\n\nGeneration Metadata:')[0],
+                messages: [{ role: 'user', content: 'Generation Metadata:' + (prompt.split('\n\nGeneration Metadata:')[1] || '') }]
             },
             {
                 headers: {
@@ -237,7 +238,9 @@ async function generateAndStoreDailyStory(options = {}) {
 
         const generationTimestamp = new Date();
         const generatedAt = generationTimestamp.toISOString();
-        const storyDateKey = options.storyDateKey || generatedAt.slice(0, 10);
+        const storyDateKey = (options.storyDateKey && /^\d{4}-\d{2}-\d{2}$/.test(options.storyDateKey))
+            ? options.storyDateKey
+            : generatedAt.slice(0, 10);
         const randomSeed = Math.random().toString(36).substring(2, 10);
         const uniqueId = Date.now() + Math.random();
         const randomNumber = Math.floor(Math.random() * 1000000);
@@ -352,8 +355,8 @@ const postRefreshHandler = async (req, res) => {
         });
     }
 };
-app.post(basePath + '/api/refresh', security.requireApiKey, postRefreshHandler);
-app.post('/api/refresh', security.requireApiKey, postRefreshHandler);
+app.post(basePath + '/api/refresh', security.rateLimiters.refresh, security.requireApiKey, postRefreshHandler);
+app.post('/api/refresh', security.rateLimiters.refresh, security.requireApiKey, postRefreshHandler);
 
 app.get(basePath, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

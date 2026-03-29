@@ -101,7 +101,7 @@ const handleValidationErrors = (req, res, next) => {
 
 // API key authentication middleware
 const requireApiKey = (req, res, next) => {
-    const providedKey = req.headers['x-api-key'] || req.query.apikey;
+    const providedKey = req.headers['x-api-key'];
     const expectedKey = process.env.APP_API_KEY;
     
     if (!expectedKey) {
