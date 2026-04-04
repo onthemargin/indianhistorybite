@@ -84,6 +84,23 @@ const validators = {
             .withMessage('Prompt must be between 1 and 5000 characters')
             .matches(/^[a-zA-Z0-9\s.,!?'"()-]+$/)
             .withMessage('Prompt contains invalid characters')
+    ],
+    pushSubscription: [
+        body('subscription').isObject().withMessage('subscription object is required'),
+        body('subscription.endpoint')
+            .isURL({ require_protocol: true })
+            .withMessage('subscription endpoint must be a valid URL'),
+        body('subscription.keys').isObject().withMessage('subscription keys are required'),
+        body('subscription.keys.p256dh')
+            .isString()
+            .trim()
+            .notEmpty()
+            .withMessage('subscription p256dh key is required'),
+        body('subscription.keys.auth')
+            .isString()
+            .trim()
+            .notEmpty()
+            .withMessage('subscription auth key is required')
     ]
 };
 
