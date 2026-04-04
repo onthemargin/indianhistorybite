@@ -290,6 +290,11 @@ function displayStoryContent(data) {
 
 // Load content on page load
 document.addEventListener('DOMContentLoaded', () => {
+    // Skip initialization on desktop — gate blocks the UI
+    if (window.innerWidth >= 768) {
+        return;
+    }
+
     const button = document.getElementById('enable-notifications');
     if (button) {
         button.addEventListener('click', handleEnableNotificationsClick);

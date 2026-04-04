@@ -198,6 +198,65 @@ h1 {
 }
 
 
+/* ── Desktop gate ─────────────────────────────────────────── */
+.desktop-gate {
+    display: none;
+}
+
+@media (min-width: 768px) {
+    .desktop-gate {
+        display: flex;
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: #f5f5f5;
+        align-items: center;
+        justify-content: center;
+    }
+
+    #mobile-app {
+        display: none;
+    }
+}
+
+.desktop-gate-content {
+    text-align: center;
+    max-width: 420px;
+    padding: 40px 30px;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.desktop-gate-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+.desktop-gate-content h1 {
+    color: #2c3e50;
+    margin-bottom: 16px;
+}
+
+.desktop-gate-content p {
+    color: #5f6368;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0 0 12px;
+}
+
+.desktop-gate-url {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 10px 20px;
+    background: #f0f0f0;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 14px;
+    color: #333;
+    letter-spacing: 0.5px;
+}
+
 .notifications-panel {
     margin: 1.5rem 0;
     padding: 1rem;
