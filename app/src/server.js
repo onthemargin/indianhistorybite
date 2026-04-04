@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const crypto = require('crypto');
 
 // Load environment variables
 // Try production path first, fall back to local .env
@@ -14,7 +15,6 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync('/etc/indianhistorybi
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-
 const app = express();
 const security = require('./security');
 
@@ -23,12 +23,22 @@ app.set('trust proxy', 1); // nginx is the only proxy; enables real client IP fo
 
 const port = process.env.PORT || 3001;
 const basePath = process.env.BASE_PATH || '/indianhistorybite';
+const runtimeRoot = path.resolve(__dirname, '../../runtime');
+const runtimeDataDir = path.join(runtimeRoot, 'data');
+const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
+const pushSubscriptionsPath = path.join(runtimeDataDir, 'push-subscriptions.json');
 
 // Prompt template from environment variable
 const promptText = process.env.PROMPT_TEXT || '';
 
-const runtimeDataDir = path.resolve(__dirname, '../../runtime/data');
-const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
+const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:notifications@example.com';
+const pushConfigured = Boolean(vapidPublicKey && vapidPrivateKey);
+
+if (!pushConfigured) {
+    console.warn('Web push is disabled because VAPID keys are not fully configured');
+}
 
 function createEmptyCurrentResult() {
     return {
@@ -37,6 +47,133 @@ function createEmptyCurrentResult() {
         lastModified: null,
         error: null
     };
+}
+
+function createEmptyPushStore() {
+    return {
+        subscriptions: []
+    };
+}
+
+function normalizeSubscriptionKeys(subscription) {
+    return {
+        endpoint: subscription.endpoint,
+        keys: {
+            p256dh: subscription.keys && subscription.keys.p256dh ? subscription.keys.p256dh : '',
+            auth: subscription.keys && subscription.keys.auth ? subscription.keys.auth : ''
+        }
+    };
+}
+
+function isValidPushSubscription(subscription) {
+    return Boolean(
+        subscription
+        && typeof subscription === 'object'
+        && typeof subscription.endpoint === 'string'
+        && subscription.endpoint
+        && subscription.keys
+        && typeof subscription.keys.p256dh === 'string'
+        && subscription.keys.p256dh
+        && typeof subscription.keys.auth === 'string'
+        && subscription.keys.auth
+    );
+}
+
+function getSubscriptionId(subscription) {
+    const normalized = normalizeSubscriptionKeys(subscription);
+    return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
+async function ensureRuntimeDataDir() {
+    await fsp.mkdir(runtimeDataDir, { recursive: true });
+}
+
+async function readJsonFile(filePath, fallbackValue) {
+    try {
+        const raw = await fsp.readFile(filePath, 'utf8');
+        return JSON.parse(raw);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return fallbackValue;
+        }
+        throw error;
+    }
+}
+
+async function writeJsonFile(filePath, value) {
+    await ensureRuntimeDataDir();
+    await fsp.writeFile(filePath, JSON.stringify(value, null, 2));
+}
+
+async function loadPushSubscriptionStore() {
+    const store = await readJsonFile(pushSubscriptionsPath, createEmptyPushStore());
+    if (!store || !Array.isArray(store.subscriptions)) {
+        return createEmptyPushStore();
+    }
+    return store;
+}
+
+async function savePushSubscriptionStore(store) {
+    await writeJsonFile(pushSubscriptionsPath, store);
+}
+
+async function upsertPushSubscription(subscription, metadata) {
+    const store = await loadPushSubscriptionStore();
+    const id = getSubscriptionId(subscription);
+    const now = new Date().toISOString();
+    const existingIndex = store.subscriptions.findIndex(item => item.id === id);
+    const existing = existingIndex >= 0 ? store.subscriptions[existingIndex] : null;
+    const record = {
+        id,
+        subscription: normalizeSubscriptionKeys(subscription),
+        createdAt: existing ? existing.createdAt : now,
+        updatedAt: now,
+        userAgent: metadata.userAgent || existing?.userAgent || 'unknown',
+        active: metadata.active ?? existing?.active ?? true,
+        lastSuccessAt: metadata.lastSuccessAt ?? existing?.lastSuccessAt ?? null,
+        lastFailureAt: metadata.lastFailureAt ?? existing?.lastFailureAt ?? null
+    };
+
+    if (existingIndex >= 0) {
+        store.subscriptions[existingIndex] = record;
+    } else {
+        store.subscriptions.push(record);
+    }
+
+    await savePushSubscriptionStore(store);
+    return record;
+}
+
+
+async function setPushSubscriptionActiveState(subscription, active, metadata = {}) {
+    const store = await loadPushSubscriptionStore();
+    const id = getSubscriptionId(subscription);
+    const existingIndex = store.subscriptions.findIndex(item => item.id === id);
+    if (existingIndex < 0) {
+        return null;
+    }
+
+    const existing = store.subscriptions[existingIndex];
+    const record = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+        active,
+        userAgent: metadata.userAgent || existing.userAgent || 'unknown',
+        lastSuccessAt: metadata.lastSuccessAt ?? existing.lastSuccessAt ?? null,
+        lastFailureAt: metadata.lastFailureAt ?? existing.lastFailureAt ?? null
+    };
+
+    store.subscriptions[existingIndex] = record;
+    await savePushSubscriptionStore(store);
+    return record;
+}
+
+async function loadDailyStoryFromStorage() {
+    return readJsonFile(currentStoryPath, null);
+}
+
+async function saveDailyStory(storyRecord) {
+    await writeJsonFile(currentStoryPath, storyRecord);
 }
 
 // Store current result
@@ -69,6 +206,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(basePath, express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
 // Log to stdout/stderr — captured by Cloud Logging
 function logRequest(prompt, response, error = null) {
@@ -164,27 +302,6 @@ async function executeClaudeAPICall(prompt) {
     } catch (error) {
         console.error('Claude API error:', error.message);
         logRequest(prompt, null, error.message);
-        throw error;
-    }
-}
-
-async function ensureRuntimeDataDir() {
-    await fsp.mkdir(runtimeDataDir, { recursive: true });
-}
-
-async function saveDailyStory(storyRecord) {
-    await ensureRuntimeDataDir();
-    await fsp.writeFile(currentStoryPath, JSON.stringify(storyRecord, null, 2));
-}
-
-async function loadDailyStoryFromStorage() {
-    try {
-        const raw = await fsp.readFile(currentStoryPath, 'utf8');
-        return JSON.parse(raw);
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            return null;
-        }
         throw error;
     }
 }
@@ -290,6 +407,7 @@ CRITICAL INSTRUCTIONS:
 
 async function initializeCurrentStory() {
     try {
+        await ensureRuntimeDataDir();
         const storedStory = await loadDailyStoryFromStorage();
         if (storedStory) {
             setCurrentResultFromStoryRecord(storedStory);
@@ -298,6 +416,9 @@ async function initializeCurrentStory() {
             currentResult = createEmptyCurrentResult();
             console.log('No stored daily story found on startup');
         }
+
+        const pushStore = await loadPushSubscriptionStore();
+        console.log(`Loaded ${pushStore.subscriptions.length} stored push subscription(s)`);
     } catch (error) {
         console.error('Failed to load stored daily story:', error.message);
         setCurrentResultError(
@@ -305,6 +426,17 @@ async function initializeCurrentStory() {
             process.env.NODE_ENV === 'production' ? 'Storage load failed' : error.message
         );
     }
+}
+
+function buildPushPublicConfig() {
+    return {
+        pushSupported: pushConfigured,
+        vapidPublicKey: pushConfigured ? vapidPublicKey : null
+    };
+}
+
+function getUserAgent(req) {
+    return req.get('user-agent') || 'unknown';
 }
 
 // Routes
@@ -332,6 +464,70 @@ const getResultHandler = async (req, res) => {
 };
 app.get(basePath + '/api/result', getResultHandler);
 app.get('/api/result', getResultHandler);
+
+app.get(basePath + '/api/config', (req, res) => {
+    res.json(buildPushPublicConfig());
+});
+app.get('/api/config', (req, res) => {
+    res.json(buildPushPublicConfig());
+});
+
+const postPushSubscribeHandler = async (req, res) => {
+    if (!pushConfigured) {
+        return res.status(503).json({ error: 'Push notifications are not configured on the server' });
+    }
+
+    const subscription = req.body && req.body.subscription ? req.body.subscription : req.body;
+    if (!isValidPushSubscription(subscription)) {
+        return res.status(400).json({ error: 'Invalid push subscription payload' });
+    }
+
+    try {
+        const record = await upsertPushSubscription(subscription, {
+            userAgent: getUserAgent(req),
+            active: true
+        });
+        return res.status(201).json({
+            success: true,
+            subscriptionId: record.id,
+            createdAt: record.createdAt,
+            active: record.active
+        });
+    } catch (error) {
+        console.error('Failed to save push subscription:', error.message);
+        return res.status(500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Failed to save subscription' : error.message
+        });
+    }
+};
+app.post(basePath + '/api/push/subscribe', postPushSubscribeHandler);
+app.post('/api/push/subscribe', postPushSubscribeHandler);
+
+const postPushUnsubscribeHandler = async (req, res) => {
+    const subscription = req.body && req.body.subscription ? req.body.subscription : req.body;
+    if (!isValidPushSubscription(subscription)) {
+        return res.status(400).json({ error: 'Invalid push subscription payload' });
+    }
+
+    try {
+        const record = await setPushSubscriptionActiveState(subscription, false, {
+            userAgent: getUserAgent(req)
+        });
+
+        if (!record) {
+            return res.status(404).json({ error: 'Subscription not found' });
+        }
+
+        return res.json({ success: true, subscriptionId: record.id, active: record.active });
+    } catch (error) {
+        console.error('Failed to deactivate push subscription:', error.message);
+        return res.status(500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Failed to update subscription' : error.message
+        });
+    }
+};
+app.post(basePath + '/api/push/unsubscribe', postPushUnsubscribeHandler);
+app.post('/api/push/unsubscribe', postPushUnsubscribeHandler);
 
 // Protected endpoint - generate and persist the next daily story
 const postRefreshHandler = async (req, res) => {
@@ -373,6 +569,7 @@ const server = app.listen(port, '127.0.0.1', () => {
     console.log(`Server running at http://localhost:${port}`);
     console.log(`Access the app at ${basePath}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Web push notifications: ${pushConfigured ? 'ENABLED' : 'DISABLED'}`);
     if (process.env.APP_API_KEY) {
         console.log('API key protection: ENABLED');
     } else {

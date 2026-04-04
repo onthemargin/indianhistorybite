@@ -30,11 +30,126 @@ function sanitizeHTML(dirty) {
     return temp.innerHTML;
 }
 
-// Determine base path from current URL (supports nested deploys)
 function getBasePath() {
+    const configuredBasePath = window.__APP_CONFIG__ && typeof window.__APP_CONFIG__.basePath === 'string'
+        ? window.__APP_CONFIG__.basePath
+        : '';
+
+    if (configuredBasePath) {
+        return configuredBasePath;
+    }
+
     const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
     return parts.length > 0 ? `/${parts[0]}` : '';
+}
+
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+}
+
+function setNotificationStatus(message, isError) {
+    const status = document.getElementById('notification-status');
+    if (!status) {
+        return;
+    }
+
+    status.textContent = message;
+    status.classList.toggle('error', Boolean(isError));
+    status.classList.toggle('success', !isError && Boolean(message));
+}
+
+async function fetchPushConfig() {
+    const base = getBasePath() || '/indianhistorybite';
+    const response = await fetch(`${base}/api/config`, {
+        cache: 'no-store',
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || 'Failed to load notification configuration');
+    }
+    return data;
+}
+
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) {
+        throw new Error('Service workers are not supported in this browser');
+    }
+
+    const swUrl = `${getBasePath() || ''}/service-worker.js`;
+    const registration = await navigator.serviceWorker.register(swUrl);
+    await navigator.serviceWorker.ready;
+    return registration;
+}
+
+async function subscribeToPushNotifications() {
+    if (!('Notification' in window)) {
+        throw new Error('Notifications are not supported in this browser');
+    }
+    if (!('PushManager' in window)) {
+        throw new Error('Push notifications are not supported in this browser');
+    }
+
+    const config = await fetchPushConfig();
+    if (!config.pushSupported || !config.vapidPublicKey) {
+        throw new Error('Notifications are not configured on this server yet');
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+        throw new Error('Notification permission was not granted');
+    }
+
+    const registration = await registerServiceWorker();
+    const existingSubscription = await registration.pushManager.getSubscription();
+    const subscription = existingSubscription || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config.vapidPublicKey)
+    });
+
+    const base = getBasePath() || '/indianhistorybite';
+    const response = await fetch(`${base}/api/push/subscribe`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            subscription: subscription.toJSON()
+        })
+    });
+
+    const responseData = await response.json();
+    if (!response.ok) {
+        throw new Error(responseData.error || 'Failed to save push subscription');
+    }
+
+    return responseData;
+}
+
+async function handleEnableNotificationsClick() {
+    const button = document.getElementById('enable-notifications');
+    if (!button) {
+        return;
+    }
+
+    button.disabled = true;
+    setNotificationStatus('Requesting permission and saving your subscription…', false);
+
+    try {
+        await subscribeToPushNotifications();
+        setNotificationStatus('Daily notifications enabled. You can close this tab whenever you like.', false);
+    } catch (error) {
+        setNotificationStatus(error.message, true);
+    } finally {
+        button.disabled = false;
+    }
 }
 
 // Fetch and display the stored daily content with robust parsing
@@ -164,4 +279,10 @@ function displayStoryContent(data) {
 }
 
 // Load content on page load
-document.addEventListener('DOMContentLoaded', fetchResult);
+document.addEventListener('DOMContentLoaded', () => {
+    const button = document.getElementById('enable-notifications');
+    if (button) {
+        button.addEventListener('click', handleEnableNotificationsClick);
+    }
+    fetchResult();
+});

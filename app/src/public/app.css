@@ -196,3 +196,48 @@ h1 {
         padding: 12px;
     }
 }
+
+
+.notifications-panel {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 1px solid #d8c7a0;
+    border-radius: 12px;
+    background: #fff9ed;
+    text-align: center;
+}
+
+#enable-notifications {
+    background: #8b5e34;
+    color: #fff;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.85rem 1.4rem;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#enable-notifications:disabled {
+    opacity: 0.7;
+    cursor: progress;
+}
+
+#notification-status {
+    margin: 0.85rem 0 0;
+    min-height: 1.5rem;
+    color: #4a3d2a;
+}
+
+#notification-status.error {
+    color: #b42318;
+}
+
+#notification-status.success {
+    color: #067647;
+}
+
+.notifications-copy {
+    margin: 0.75rem 0 0;
+    color: #5f4c33;
+}
