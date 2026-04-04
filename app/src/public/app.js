@@ -44,6 +44,12 @@ function getBasePath() {
     return parts.length > 0 ? `/${parts[0]}` : '';
 }
 
+function getRequestedStoryDateKey() {
+    const params = new URLSearchParams(window.location.search);
+    const storyDateKey = params.get('story');
+    return storyDateKey && storyDateKey.trim() ? storyDateKey.trim() : null;
+}
+
 function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -156,7 +162,11 @@ async function handleEnableNotificationsClick() {
 async function fetchResult() {
     try {
         const base = getBasePath() || '/indianhistorybite';
-        const url = `${base}/api/result`;
+        const url = new URL(`${window.location.origin}${base}/api/result`);
+        const storyDateKey = getRequestedStoryDateKey();
+        if (storyDateKey) {
+            url.searchParams.set('story', storyDateKey);
+        }
         const response = await fetch(url, {
             cache: 'no-store',
             headers: {
