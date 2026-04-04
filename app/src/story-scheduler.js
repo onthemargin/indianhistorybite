@@ -8,6 +8,7 @@ const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
 const storiesArchiveDir = path.join(runtimeDataDir, 'stories');
 const subscriptionsPath = path.join(runtimeDataDir, 'push-subscriptions.json');
 const notificationLedgerPath = path.join(runtimeDataDir, 'push-send-ledger.json');
+const pushDeliveryLogPath = path.join(runtimeDataDir, 'push-delivery-log.json');
 
 function getStoryDateKey(date = new Date()) {
     return date.toISOString().slice(0, 10);
@@ -523,6 +524,136 @@ async function removePushSubscription(subscription) {
     return { subscriptionIdentifier, removed, count: nextSubscriptions.length };
 }
 
+function logPushEvent(event, details = {}, level = 'info') {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        category: 'push',
+        event,
+        ...details
+    };
+
+    const target = level === 'error' ? console.error : console.log;
+    target(JSON.stringify(entry));
+}
+
+async function deactivateSubscription(endpoint, reason) {
+    const subscriptionsData = await loadSubscriptions();
+    const index = subscriptionsData.subscriptions.findIndex((item) => {
+        const sub = item.subscription || item;
+        return getSubscriptionIdentifier(sub) === endpoint;
+    });
+
+    if (index === -1) {
+        return null;
+    }
+
+    const now = new Date().toISOString();
+    subscriptionsData.subscriptions[index] = {
+        ...subscriptionsData.subscriptions[index],
+        active: false,
+        updatedAt: now,
+        deactivatedAt: now,
+        deactivationReason: reason
+    };
+
+    if (reason === 'removed') {
+        logPushEvent('subscription_removed', { endpoint, active: false });
+    } else {
+        logPushEvent('subscription_expired_or_deactivated', { endpoint, active: false, reason });
+    }
+
+    await saveSubscriptions(subscriptionsData);
+    return subscriptionsData.subscriptions[index];
+}
+
+async function loadPushDeliveryLog() {
+    return readJsonFile(pushDeliveryLogPath, []);
+}
+
+async function appendPushDeliveryLog(entry) {
+    const entries = await loadPushDeliveryLog();
+    entries.push(entry);
+    await writeJsonFile(pushDeliveryLogPath, entries);
+}
+
+async function recordPushDeliveryStatus({ endpoint, status, storyDateKey, errorMessage = null, deliveredAt }) {
+    const timestamp = deliveredAt || new Date().toISOString();
+
+    await appendPushDeliveryLog({
+        endpoint,
+        status,
+        storyDateKey: storyDateKey || null,
+        deliveredAt: timestamp,
+        errorMessage
+    });
+
+    const subscriptionsData = await loadSubscriptions();
+    const index = subscriptionsData.subscriptions.findIndex((item) => {
+        const sub = item.subscription || item;
+        return getSubscriptionIdentifier(sub) === endpoint;
+    });
+
+    if (index >= 0) {
+        const record = subscriptionsData.subscriptions[index];
+        record.updatedAt = timestamp;
+        record.lastDeliveryStatus = status;
+        record.lastDeliveredAt = timestamp;
+
+        if (status === 'sent') {
+            record.lastSuccessfulDeliveryAt = timestamp;
+            logPushEvent('notification_sent', { endpoint, storyDateKey: storyDateKey || null });
+        } else if (status === 'failed') {
+            logPushEvent('notification_failed', { endpoint, storyDateKey: storyDateKey || null, errorMessage }, 'error');
+        } else if (status === 'expired') {
+            record.active = false;
+            record.deactivatedAt = timestamp;
+            record.deactivationReason = 'expired';
+            logPushEvent('subscription_expired_or_deactivated', { endpoint, storyDateKey: storyDateKey || null, reason: 'expired' }, 'error');
+        }
+
+        await saveSubscriptions(subscriptionsData);
+        return record;
+    }
+
+    if (status === 'sent') {
+        logPushEvent('notification_sent', { endpoint, storyDateKey: storyDateKey || null });
+    } else if (status === 'failed') {
+        logPushEvent('notification_failed', { endpoint, storyDateKey: storyDateKey || null, errorMessage }, 'error');
+    } else if (status === 'expired') {
+        logPushEvent('subscription_expired_or_deactivated', { endpoint, storyDateKey: storyDateKey || null, reason: 'expired' }, 'error');
+    }
+
+    return null;
+}
+
+async function buildAdminStatusResponse() {
+    const [subscriptionsData, deliveryLog, storedStory] = await Promise.all([
+        loadSubscriptions(),
+        loadPushDeliveryLog(),
+        loadDailyStoryFromStorage()
+    ]);
+
+    const subscriptions = subscriptionsData.subscriptions || [];
+    const todayDateKey = storedStory && storedStory.storyDateKey ? storedStory.storyDateKey : getStoryDateKey();
+    const todaysDeliveries = deliveryLog.filter(entry => entry.storyDateKey === todayDateKey);
+
+    return {
+        generatedAt: new Date().toISOString(),
+        todayStoryDate: todayDateKey,
+        subscriptions: {
+            total: subscriptions.length,
+            active: subscriptions.filter(s => s.active !== false).length,
+            inactive: subscriptions.filter(s => s.active === false).length
+        },
+        sends: {
+            todayTotal: todaysDeliveries.length,
+            todaySent: todaysDeliveries.filter(e => e.status === 'sent').length,
+            todayFailed: todaysDeliveries.filter(e => e.status === 'failed').length,
+            todayExpired: todaysDeliveries.filter(e => e.status === 'expired').length
+        }
+    };
+}
+
 async function initializeCurrentStory() {
     try {
         const storedStory = await loadDailyStoryFromStorage();
@@ -559,5 +690,9 @@ module.exports = {
     upsertPushSubscription,
     removePushSubscription,
     loadSubscriptions,
-    loadNotificationLedger
+    loadNotificationLedger,
+    deactivateSubscription,
+    recordPushDeliveryStatus,
+    buildAdminStatusResponse,
+    loadPushDeliveryLog
 };
