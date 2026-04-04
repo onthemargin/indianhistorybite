@@ -5,6 +5,7 @@ const axios = require('axios');
 
 const runtimeDataDir = path.resolve(__dirname, '../../runtime/data');
 const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
+const storiesArchiveDir = path.join(runtimeDataDir, 'stories');
 const subscriptionsPath = path.join(runtimeDataDir, 'push-subscriptions.json');
 const notificationLedgerPath = path.join(runtimeDataDir, 'push-send-ledger.json');
 
@@ -42,6 +43,29 @@ function createSendLedgerKey(storyDateKey, subscriptionIdentifier) {
 
 async function ensureRuntimeDataDir() {
     await fsp.mkdir(runtimeDataDir, { recursive: true });
+    await fsp.mkdir(storiesArchiveDir, { recursive: true });
+}
+
+function getStoryArchivePath(storyDateKey) {
+    return path.join(storiesArchiveDir, `${storyDateKey}.json`);
+}
+
+function buildStoryAppUrl(storyDateKey) {
+    const basePath = process.env.BASE_PATH || '/indianhistorybite';
+    const searchParams = new URLSearchParams({ story: storyDateKey });
+    return `${basePath}/?${searchParams.toString()}`;
+}
+
+function buildNotificationPayload(storyRecord) {
+    const teaser = storyRecord.story.shareableQuote || storyRecord.story.title || 'Tap to read today\u2019s Indian History Bite.';
+
+    return {
+        title: storyRecord.story.name,
+        body: teaser,
+        url: buildStoryAppUrl(storyRecord.storyDateKey),
+        tag: storyRecord.storyDateKey,
+        storyDateKey: storyRecord.storyDateKey
+    };
 }
 
 async function writeJsonFile(filePath, payload) {
@@ -154,11 +178,17 @@ async function executeClaudeAPICall(prompt) {
 }
 
 async function saveDailyStory(storyRecord) {
-    await writeJsonFile(currentStoryPath, storyRecord);
+    await ensureRuntimeDataDir();
+    const serialized = JSON.stringify(storyRecord, null, 2);
+    await Promise.all([
+        fsp.writeFile(currentStoryPath, serialized),
+        fsp.writeFile(getStoryArchivePath(storyRecord.storyDateKey), serialized)
+    ]);
 }
 
-async function loadDailyStoryFromStorage() {
-    return readJsonFile(currentStoryPath, null);
+async function loadDailyStoryFromStorage(storyDateKey) {
+    const targetPath = storyDateKey ? getStoryArchivePath(storyDateKey) : currentStoryPath;
+    return readJsonFile(targetPath, null);
 }
 
 async function loadSubscriptions() {
@@ -193,7 +223,8 @@ function setCurrentResultFromStoryRecord(storyRecord) {
         error: null,
         storyDateKey: storyRecord.storyDateKey,
         generatedAt: storyRecord.generatedAt,
-        notificationSent: Boolean(storyRecord.notificationSent)
+        notificationSent: Boolean(storyRecord.notificationSent),
+        notification: storyRecord.notification || null
     };
     return currentResult;
 }
@@ -261,6 +292,7 @@ CRITICAL INSTRUCTIONS:
             storyDateKey,
             notificationSent: options.notificationSent ?? false
         };
+        storyRecord.notification = buildNotificationPayload(storyRecord);
 
         await saveDailyStory(storyRecord);
         return setCurrentResultFromStoryRecord(storyRecord);
