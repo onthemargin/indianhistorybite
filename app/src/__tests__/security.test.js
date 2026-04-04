@@ -37,10 +37,13 @@ describe('security module', () => {
             delete process.env.APP_API_KEY;
         });
 
-        it('calls next() when no APP_API_KEY is configured (dev mode)', () => {
+        it('returns 503 when no APP_API_KEY is configured', () => {
             delete process.env.APP_API_KEY;
             security.requireApiKey(req, res, next);
-            expect(next).toHaveBeenCalled();
+            expect(res.statusCode).toBe(503);
+            expect(res.json).toHaveBeenCalledWith(
+                expect.objectContaining({ error: expect.stringContaining('APP_API_KEY') })
+            );
         });
 
         it('returns 401 when API key is required but not provided', () => {
