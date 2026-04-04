@@ -47,5 +47,7 @@ Thumbs.db
 secrets.json
 credentials.json
 
-# Claude Code specific
-.claude/.claudeignore
+# Claude Code
+CLAUDE.md
+.claude/
+.claudeignore
