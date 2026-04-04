@@ -75,17 +75,24 @@ app.use(basePath, express.static(path.join(__dirname, 'public'), { maxAge: '1h' 
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
 // Routes
-// Public endpoint - get current stored result only
+// Public endpoint - get current stored result only, with optional deep-link by date key
 const getResultHandler = async (req, res) => {
     try {
-        const storedStory = await scheduler.loadDailyStoryFromStorage();
+        const storyDateKey = typeof req.query.story === 'string' && req.query.story.trim()
+            ? req.query.story.trim()
+            : typeof req.query.storyDateKey === 'string' && req.query.storyDateKey.trim()
+                ? req.query.storyDateKey.trim()
+                : null;
+        const storedStory = await scheduler.loadDailyStoryFromStorage(storyDateKey);
         if (storedStory) {
             return res.json(scheduler.setCurrentResultFromStoryRecord(storedStory));
         }
 
         return res.status(404).json({
             ...scheduler.createEmptyCurrentResult(),
-            error: 'No daily story has been generated yet'
+            error: storyDateKey
+                ? `No saved daily story found for ${storyDateKey}`
+                : 'No daily story has been generated yet'
         });
     } catch (error) {
         console.error('Error loading stored story:', error);
