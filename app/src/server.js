@@ -145,6 +145,51 @@ app.post('/api/push/unsubscribe', ...pushUnsubscribeMiddleware, handleAsyncRoute
     res.json({ success: true, ...result });
 }));
 
+// Push delivery status tracking (protected)
+const postPushDeliveryHandler = async (req, res) => {
+    const endpoint = req.body && typeof req.body.endpoint === 'string' ? req.body.endpoint.trim() : '';
+    const status = req.body && typeof req.body.status === 'string' ? req.body.status.trim() : '';
+    const allowedStatuses = new Set(['sent', 'failed', 'expired']);
+
+    if (!endpoint || !allowedStatuses.has(status)) {
+        return res.status(400).json({ error: 'endpoint and valid status (sent/failed/expired) are required' });
+    }
+
+    try {
+        const subscription = await scheduler.recordPushDeliveryStatus({
+            endpoint,
+            status,
+            storyDateKey: req.body && req.body.storyDateKey,
+            errorMessage: req.body && req.body.errorMessage,
+            deliveredAt: req.body && req.body.deliveredAt
+        });
+        return res.json({ success: true, subscription });
+    } catch (error) {
+        console.error('Push delivery status error:', error);
+        return res.status(500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Failed to record push delivery status' : error.message,
+            success: false
+        });
+    }
+};
+app.post(basePath + '/api/push/delivery-status', security.requireApiKey, postPushDeliveryHandler);
+app.post('/api/push/delivery-status', security.requireApiKey, postPushDeliveryHandler);
+
+// Admin status endpoint (protected)
+const getAdminStatusHandler = async (req, res) => {
+    try {
+        return res.json(await scheduler.buildAdminStatusResponse());
+    } catch (error) {
+        console.error('Admin status error:', error);
+        return res.status(500).json({
+            error: process.env.NODE_ENV === 'production' ? 'Failed to load admin status' : error.message,
+            success: false
+        });
+    }
+};
+app.get(basePath + '/api/admin/status', security.rateLimiters.admin, security.requireApiKey, getAdminStatusHandler);
+app.get('/api/admin/status', security.rateLimiters.admin, security.requireApiKey, getAdminStatusHandler);
+
 // Protected endpoint - generate and persist the next daily story
 const postRefreshHandler = async (req, res) => {
     console.log('Manual daily story generation triggered');
