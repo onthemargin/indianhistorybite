@@ -69,6 +69,25 @@ function buildNotificationPayload(storyRecord) {
     };
 }
 
+// Simple per-file async mutex to prevent concurrent read-modify-write races
+const fileLocks = new Map();
+
+async function withFileLock(filePath, fn) {
+    if (!fileLocks.has(filePath)) {
+        fileLocks.set(filePath, Promise.resolve());
+    }
+    const prev = fileLocks.get(filePath);
+    let resolve;
+    const next = new Promise(r => { resolve = r; });
+    fileLocks.set(filePath, next);
+    await prev;
+    try {
+        return await fn();
+    } finally {
+        resolve();
+    }
+}
+
 async function writeJsonFile(filePath, payload) {
     await ensureRuntimeDataDir();
     await fsp.writeFile(filePath, JSON.stringify(payload, null, 2));
@@ -491,37 +510,41 @@ async function runDailyStoryJob(options = {}) {
 }
 
 async function upsertPushSubscription(subscription) {
-    const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
-    const subscriptionsData = await loadSubscriptions();
-    const now = new Date().toISOString();
-    const nextSubscriptions = subscriptionsData.subscriptions.filter((item) => {
-        const existingSubscription = item.subscription || item;
-        return getSubscriptionIdentifier(existingSubscription) !== subscriptionIdentifier;
-    });
+    return withFileLock(subscriptionsPath, async () => {
+        const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
+        const subscriptionsData = await loadSubscriptions();
+        const now = new Date().toISOString();
+        const nextSubscriptions = subscriptionsData.subscriptions.filter((item) => {
+            const existingSubscription = item.subscription || item;
+            return getSubscriptionIdentifier(existingSubscription) !== subscriptionIdentifier;
+        });
 
-    nextSubscriptions.push({
-        subscription,
-        createdAt: now,
-        updatedAt: now,
-        active: true
-    });
+        nextSubscriptions.push({
+            subscription,
+            createdAt: now,
+            updatedAt: now,
+            active: true
+        });
 
-    subscriptionsData.subscriptions = nextSubscriptions;
-    await saveSubscriptions(subscriptionsData);
-    return { subscriptionIdentifier, count: nextSubscriptions.length };
+        subscriptionsData.subscriptions = nextSubscriptions;
+        await saveSubscriptions(subscriptionsData);
+        return { subscriptionIdentifier, count: nextSubscriptions.length };
+    });
 }
 
 async function removePushSubscription(subscription) {
-    const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
-    const subscriptionsData = await loadSubscriptions();
-    const nextSubscriptions = subscriptionsData.subscriptions.filter((item) => {
-        const existingSubscription = item.subscription || item;
-        return getSubscriptionIdentifier(existingSubscription) !== subscriptionIdentifier;
+    return withFileLock(subscriptionsPath, async () => {
+        const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
+        const subscriptionsData = await loadSubscriptions();
+        const nextSubscriptions = subscriptionsData.subscriptions.filter((item) => {
+            const existingSubscription = item.subscription || item;
+            return getSubscriptionIdentifier(existingSubscription) !== subscriptionIdentifier;
+        });
+        const removed = nextSubscriptions.length !== subscriptionsData.subscriptions.length;
+        subscriptionsData.subscriptions = nextSubscriptions;
+        await saveSubscriptions(subscriptionsData);
+        return { subscriptionIdentifier, removed, count: nextSubscriptions.length };
     });
-    const removed = nextSubscriptions.length !== subscriptionsData.subscriptions.length;
-    subscriptionsData.subscriptions = nextSubscriptions;
-    await saveSubscriptions(subscriptionsData);
-    return { subscriptionIdentifier, removed, count: nextSubscriptions.length };
 }
 
 function logPushEvent(event, details = {}, level = 'info') {
@@ -537,6 +560,7 @@ function logPushEvent(event, details = {}, level = 'info') {
 }
 
 async function deactivateSubscription(endpoint, reason) {
+    return withFileLock(subscriptionsPath, async () => {
     const subscriptionsData = await loadSubscriptions();
     const index = subscriptionsData.subscriptions.findIndex((item) => {
         const sub = item.subscription || item;
@@ -564,22 +588,30 @@ async function deactivateSubscription(endpoint, reason) {
 
     await saveSubscriptions(subscriptionsData);
     return subscriptionsData.subscriptions[index];
+    });
 }
 
 async function loadPushDeliveryLog() {
     return readJsonFile(pushDeliveryLogPath, []);
 }
 
+const DELIVERY_LOG_MAX_ENTRIES = 1000;
+
 async function appendPushDeliveryLog(entry) {
-    const entries = await loadPushDeliveryLog();
-    entries.push(entry);
-    await writeJsonFile(pushDeliveryLogPath, entries);
+    return withFileLock(pushDeliveryLogPath, async () => {
+        let entries = await loadPushDeliveryLog();
+        entries.push(entry);
+        if (entries.length > DELIVERY_LOG_MAX_ENTRIES) {
+            entries = entries.slice(entries.length - DELIVERY_LOG_MAX_ENTRIES);
+        }
+        await writeJsonFile(pushDeliveryLogPath, entries);
+    });
 }
 
 async function recordPushDeliveryStatus({ endpoint, status, storyDateKey, errorMessage = null, deliveredAt }) {
     const timestamp = deliveredAt || new Date().toISOString();
 
-    await appendPushDeliveryLog({
+    await appendPushDeliveryLog({  // already locked internally
         endpoint,
         status,
         storyDateKey: storyDateKey || null,
@@ -587,43 +619,43 @@ async function recordPushDeliveryStatus({ endpoint, status, storyDateKey, errorM
         errorMessage
     });
 
-    const subscriptionsData = await loadSubscriptions();
-    const index = subscriptionsData.subscriptions.findIndex((item) => {
-        const sub = item.subscription || item;
-        return getSubscriptionIdentifier(sub) === endpoint;
-    });
+    return withFileLock(subscriptionsPath, async () => {
+        const subscriptionsData = await loadSubscriptions();
+        const index = subscriptionsData.subscriptions.findIndex((item) => {
+            const sub = item.subscription || item;
+            return getSubscriptionIdentifier(sub) === endpoint;
+        });
 
-    if (index >= 0) {
-        const record = subscriptionsData.subscriptions[index];
-        record.updatedAt = timestamp;
-        record.lastDeliveryStatus = status;
-        record.lastDeliveredAt = timestamp;
+        if (index >= 0) {
+            const record = subscriptionsData.subscriptions[index];
+            record.updatedAt = timestamp;
+            record.lastDeliveryStatus = status;
+            record.lastDeliveredAt = timestamp;
 
-        if (status === 'sent') {
-            record.lastSuccessfulDeliveryAt = timestamp;
-            logPushEvent('notification_sent', { endpoint, storyDateKey: storyDateKey || null });
-        } else if (status === 'failed') {
-            logPushEvent('notification_failed', { endpoint, storyDateKey: storyDateKey || null, errorMessage }, 'error');
-        } else if (status === 'expired') {
-            record.active = false;
-            record.deactivatedAt = timestamp;
-            record.deactivationReason = 'expired';
-            logPushEvent('subscription_expired_or_deactivated', { endpoint, storyDateKey: storyDateKey || null, reason: 'expired' }, 'error');
+            if (status === 'sent') {
+                record.lastSuccessfulDeliveryAt = timestamp;
+            } else if (status === 'expired') {
+                record.active = false;
+                record.deactivatedAt = timestamp;
+                record.deactivationReason = 'expired';
+            }
+
+            await saveSubscriptions(subscriptionsData);
+            logPushEvent(
+                status === 'sent' ? 'notification_sent' : status === 'failed' ? 'notification_failed' : 'subscription_expired_or_deactivated',
+                { endpoint, storyDateKey: storyDateKey || null, ...(errorMessage ? { errorMessage } : {}), ...(status === 'expired' ? { reason: 'expired' } : {}) },
+                status === 'sent' ? 'info' : 'error'
+            );
+            return record;
         }
 
-        await saveSubscriptions(subscriptionsData);
-        return record;
-    }
-
-    if (status === 'sent') {
-        logPushEvent('notification_sent', { endpoint, storyDateKey: storyDateKey || null });
-    } else if (status === 'failed') {
-        logPushEvent('notification_failed', { endpoint, storyDateKey: storyDateKey || null, errorMessage }, 'error');
-    } else if (status === 'expired') {
-        logPushEvent('subscription_expired_or_deactivated', { endpoint, storyDateKey: storyDateKey || null, reason: 'expired' }, 'error');
-    }
-
-    return null;
+        logPushEvent(
+            status === 'sent' ? 'notification_sent' : status === 'failed' ? 'notification_failed' : 'subscription_expired_or_deactivated',
+            { endpoint, storyDateKey: storyDateKey || null, ...(errorMessage ? { errorMessage } : {}), ...(status === 'expired' ? { reason: 'expired' } : {}) },
+            status === 'sent' ? 'info' : 'error'
+        );
+        return null;
+    });
 }
 
 async function buildAdminStatusResponse() {
