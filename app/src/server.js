@@ -114,6 +114,37 @@ app.get('/api/config', (req, res) => {
     res.json(buildPushPublicConfig());
 });
 
+// Push subscription routes with rate limiting and validation
+const pushSubscribeMiddleware = [
+    security.rateLimiters.pushSubscribe,
+    security.validators.pushSubscription,
+    security.handleValidationErrors
+];
+
+app.post(basePath + '/api/push/subscribe', ...pushSubscribeMiddleware, handleAsyncRoute(async (req, res) => {
+    const result = await scheduler.upsertPushSubscription(req.body.subscription);
+    res.json({ success: true, ...result });
+}));
+app.post('/api/push/subscribe', ...pushSubscribeMiddleware, handleAsyncRoute(async (req, res) => {
+    const result = await scheduler.upsertPushSubscription(req.body.subscription);
+    res.json({ success: true, ...result });
+}));
+
+const pushUnsubscribeMiddleware = [
+    security.rateLimiters.pushUnsubscribe,
+    security.validators.pushSubscription,
+    security.handleValidationErrors
+];
+
+app.post(basePath + '/api/push/unsubscribe', ...pushUnsubscribeMiddleware, handleAsyncRoute(async (req, res) => {
+    const result = await scheduler.removePushSubscription(req.body.subscription);
+    res.json({ success: true, ...result });
+}));
+app.post('/api/push/unsubscribe', ...pushUnsubscribeMiddleware, handleAsyncRoute(async (req, res) => {
+    const result = await scheduler.removePushSubscription(req.body.subscription);
+    res.json({ success: true, ...result });
+}));
+
 // Protected endpoint - generate and persist the next daily story
 const postRefreshHandler = async (req, res) => {
     console.log('Manual daily story generation triggered');
@@ -133,31 +164,14 @@ const postRefreshHandler = async (req, res) => {
         });
     }
 };
-app.post(basePath + '/api/refresh', security.rateLimiters.refresh, security.requireApiKey, postRefreshHandler);
-app.post('/api/refresh', security.rateLimiters.refresh, security.requireApiKey, postRefreshHandler);
 
-const pushSubscriptionValidator = [
-    security.validators.pushSubscription,
-    security.handleValidationErrors
-];
-
-app.post(basePath + '/api/push/subscribe', pushSubscriptionValidator, handleAsyncRoute(async (req, res) => {
-    const result = await scheduler.upsertPushSubscription(req.body.subscription);
-    res.json({ success: true, ...result });
-}));
-app.post('/api/push/subscribe', pushSubscriptionValidator, handleAsyncRoute(async (req, res) => {
-    const result = await scheduler.upsertPushSubscription(req.body.subscription);
-    res.json({ success: true, ...result });
-}));
-
-app.post(basePath + '/api/push/unsubscribe', pushSubscriptionValidator, handleAsyncRoute(async (req, res) => {
-    const result = await scheduler.removePushSubscription(req.body.subscription);
-    res.json({ success: true, ...result });
-}));
-app.post('/api/push/unsubscribe', pushSubscriptionValidator, handleAsyncRoute(async (req, res) => {
-    const result = await scheduler.removePushSubscription(req.body.subscription);
-    res.json({ success: true, ...result });
-}));
+const refreshMiddleware = [security.rateLimiters.refresh, security.requireApiKey];
+app.post(basePath + '/api/refresh', ...refreshMiddleware, postRefreshHandler);
+app.post('/api/refresh', ...refreshMiddleware, postRefreshHandler);
+app.post(basePath + '/api/generate', ...refreshMiddleware, postRefreshHandler);
+app.post('/api/generate', ...refreshMiddleware, postRefreshHandler);
+app.post(basePath + '/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
+app.post('/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
 
 app.post(basePath + '/api/jobs/daily-story', security.requireApiKey, handleAsyncRoute(async (req, res) => {
     const result = await scheduler.runDailyStoryJob({ storyDateKey: req.body && req.body.storyDateKey });
