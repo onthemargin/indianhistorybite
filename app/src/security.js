@@ -29,17 +29,31 @@ const rateLimiters = {
         'Too many requests, please try again later.'
     ),
     
-    // Strict limit for refresh endpoint - 10 requests per hour
+    // Strict limit for manual generation/refresh endpoints
     refresh: createRateLimiter(
         60 * 60 * 1000,
-        10,
+        3,
         'Refresh limit exceeded. Please wait before requesting new content.'
     ),
 
-    // Very strict for admin endpoints - 5 requests per hour
+    // Tight rate limit for push subscription writes
+    pushSubscribe: createRateLimiter(
+        15 * 60 * 1000,
+        10,
+        'Push subscription limit exceeded. Please try again later.'
+    ),
+
+    // Tight but slightly more permissive limit for unsubscribe requests
+    pushUnsubscribe: createRateLimiter(
+        15 * 60 * 1000,
+        20,
+        'Push unsubscribe limit exceeded. Please try again later.'
+    ),
+
+    // Very strict for admin endpoints
     admin: createRateLimiter(
         60 * 60 * 1000,
-        5,
+        3,
         'Admin request limit exceeded.'
     )
 };
@@ -86,21 +100,54 @@ const validators = {
             .withMessage('Prompt contains invalid characters')
     ],
     pushSubscription: [
-        body('subscription').isObject().withMessage('subscription object is required'),
+        body('subscription')
+            .exists()
+            .withMessage('Subscription payload is required')
+            .bail()
+            .isObject()
+            .withMessage('Subscription payload must be an object'),
         body('subscription.endpoint')
-            .isURL({ require_protocol: true })
-            .withMessage('subscription endpoint must be a valid URL'),
-        body('subscription.keys').isObject().withMessage('subscription keys are required'),
+            .isString()
+            .withMessage('Subscription endpoint is required')
+            .bail()
+            .isLength({ min: 1, max: 2048 })
+            .withMessage('Subscription endpoint must be between 1 and 2048 characters')
+            .bail()
+            .matches(/^https:\/\/[^\s]+$/)
+            .withMessage('Subscription endpoint must be a valid HTTPS URL'),
+        body('subscription.expirationTime')
+            .optional({ nullable: true })
+            .custom((value) => value === null || Number.isInteger(value))
+            .withMessage('Subscription expirationTime must be null or an integer timestamp'),
+        body('subscription.keys')
+            .exists()
+            .withMessage('Subscription keys are required')
+            .bail()
+            .isObject()
+            .withMessage('Subscription keys must be an object'),
         body('subscription.keys.p256dh')
             .isString()
-            .trim()
-            .notEmpty()
-            .withMessage('subscription p256dh key is required'),
+            .withMessage('Subscription key p256dh is required')
+            .bail()
+            .matches(/^[A-Za-z0-9_-]{20,512}$/)
+            .withMessage('Subscription key p256dh must be valid base64url'),
         body('subscription.keys.auth')
             .isString()
-            .trim()
-            .notEmpty()
-            .withMessage('subscription auth key is required')
+            .withMessage('Subscription key auth is required')
+            .bail()
+            .matches(/^[A-Za-z0-9_-]{8,256}$/)
+            .withMessage('Subscription key auth must be valid base64url')
+    ],
+    pushUnsubscribe: [
+        body('endpoint')
+            .isString()
+            .withMessage('Subscription endpoint is required')
+            .bail()
+            .isLength({ min: 1, max: 2048 })
+            .withMessage('Subscription endpoint must be between 1 and 2048 characters')
+            .bail()
+            .matches(/^https:\/\/[^\s]+$/)
+            .withMessage('Subscription endpoint must be a valid HTTPS URL')
     ]
 };
 
@@ -122,8 +169,7 @@ const requireApiKey = (req, res, next) => {
     const expectedKey = process.env.APP_API_KEY;
     
     if (!expectedKey) {
-        // If no API key is configured, allow access (for development)
-        return next();
+        return res.status(503).json({ error: 'APP_API_KEY is not configured for this protected endpoint' });
     }
     
     if (!providedKey) {
