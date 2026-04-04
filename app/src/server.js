@@ -75,14 +75,21 @@ app.use(basePath, express.static(path.join(__dirname, 'public'), { maxAge: '1h' 
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
 // Routes
+const VALID_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 // Public endpoint - get current stored result only, with optional deep-link by date key
 const getResultHandler = async (req, res) => {
     try {
-        const storyDateKey = typeof req.query.story === 'string' && req.query.story.trim()
+        const rawDateKey = typeof req.query.story === 'string' && req.query.story.trim()
             ? req.query.story.trim()
             : typeof req.query.storyDateKey === 'string' && req.query.storyDateKey.trim()
                 ? req.query.storyDateKey.trim()
                 : null;
+
+        if (rawDateKey && !VALID_DATE_RE.test(rawDateKey)) {
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+        }
+        const storyDateKey = rawDateKey;
         const storedStory = await scheduler.loadDailyStoryFromStorage(storyDateKey);
         if (storedStory) {
             return res.json(scheduler.setCurrentResultFromStoryRecord(storedStory));
@@ -172,8 +179,8 @@ const postPushDeliveryHandler = async (req, res) => {
         });
     }
 };
-app.post(basePath + '/api/push/delivery-status', security.requireApiKey, postPushDeliveryHandler);
-app.post('/api/push/delivery-status', security.requireApiKey, postPushDeliveryHandler);
+app.post(basePath + '/api/push/delivery-status', security.rateLimiters.admin, security.requireApiKey, postPushDeliveryHandler);
+app.post('/api/push/delivery-status', security.rateLimiters.admin, security.requireApiKey, postPushDeliveryHandler);
 
 // Admin status endpoint (protected)
 const getAdminStatusHandler = async (req, res) => {
