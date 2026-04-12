@@ -55,17 +55,15 @@ const corsOptions = {
     origin: function (origin, callback) {
         const allowedOrigins = process.env.ALLOWED_ORIGINS
             ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-            : [];
+            : ['https://app.gyatso.me'];
 
-        // Allow requests without origin (same-origin, Postman, curl, etc.)
-        // or if origin is in the allowed list
-        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
+        if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            callback(null, false);
         }
     },
-    maxAge: 86400 // Cache preflight requests for 24 hours
+    maxAge: 86400
 };
 
 // Middleware

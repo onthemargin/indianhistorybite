@@ -139,6 +139,27 @@ describe('storyDateKey validation', () => {
     });
 });
 
+describe('CORS policy', () => {
+    it('blocks cross-origin requests from arbitrary origins', async () => {
+        const res = await request
+            .get('/indianhistorybite/api/result')
+            .set('Origin', 'https://evil.com');
+        expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    it('allows same-origin requests (no Origin header)', async () => {
+        const res = await request.get('/indianhistorybite/api/result');
+        expect(res.status).not.toBe(403);
+    });
+
+    it('allows requests from the production origin', async () => {
+        const res = await request
+            .get('/indianhistorybite/api/result')
+            .set('Origin', 'https://app.gyatso.me');
+        expect(res.headers['access-control-allow-origin']).toBe('https://app.gyatso.me');
+    });
+});
+
 describe('alternate route paths (without basePath prefix)', () => {
     it('GET /api/result also works', async () => {
         const res = await request.get('/api/result');
