@@ -1,14 +1,21 @@
 const path = require('path');
-const fs = require('fs');
-const fsp = require('fs/promises');
 const axios = require('axios');
+const { createStorage } = require('./storage');
 
+// Pluggable persistence backend (filesystem by default, Firestore when
+// STORAGE_BACKEND=firestore). All persistent state flows through this.
+const storage = createStorage(process.env);
+
+// Retained for backwards compatibility with anything importing the path.
 const runtimeDataDir = path.resolve(__dirname, '../../runtime/data');
 const currentStoryPath = path.join(runtimeDataDir, 'current-story.json');
-const storiesArchiveDir = path.join(runtimeDataDir, 'stories');
-const subscriptionsPath = path.join(runtimeDataDir, 'push-subscriptions.json');
-const notificationLedgerPath = path.join(runtimeDataDir, 'push-send-ledger.json');
-const pushDeliveryLogPath = path.join(runtimeDataDir, 'push-delivery-log.json');
+
+// Logical storage keys — see storage.js for the per-backend mapping.
+const CURRENT_STORY_KEY = 'current-story';
+const SUBSCRIPTIONS_KEY = 'push-subscriptions';
+const NOTIFICATION_LEDGER_KEY = 'push-send-ledger';
+const PUSH_DELIVERY_LOG_KEY = 'push-delivery-log';
+const storyArchiveKey = (storyDateKey) => `stories/${storyDateKey}`;
 
 function getStoryDateKey(date = new Date()) {
     return date.toISOString().slice(0, 10);
@@ -40,15 +47,6 @@ function getSubscriptionIdentifier(subscription) {
 
 function createSendLedgerKey(storyDateKey, subscriptionIdentifier) {
     return `${storyDateKey}::${subscriptionIdentifier}`;
-}
-
-async function ensureRuntimeDataDir() {
-    await fsp.mkdir(runtimeDataDir, { recursive: true });
-    await fsp.mkdir(storiesArchiveDir, { recursive: true });
-}
-
-function getStoryArchivePath(storyDateKey) {
-    return path.join(storiesArchiveDir, `${storyDateKey}.json`);
 }
 
 function buildStoryAppUrl(storyDateKey) {
@@ -85,23 +83,6 @@ async function withFileLock(filePath, fn) {
         return await fn();
     } finally {
         resolve();
-    }
-}
-
-async function writeJsonFile(filePath, payload) {
-    await ensureRuntimeDataDir();
-    await fsp.writeFile(filePath, JSON.stringify(payload, null, 2));
-}
-
-async function readJsonFile(filePath, fallbackValue) {
-    try {
-        const raw = await fsp.readFile(filePath, 'utf8');
-        return JSON.parse(raw);
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            return fallbackValue;
-        }
-        throw error;
     }
 }
 
@@ -198,21 +179,19 @@ async function executeClaudeAPICall(prompt) {
 }
 
 async function saveDailyStory(storyRecord) {
-    await ensureRuntimeDataDir();
-    const serialized = JSON.stringify(storyRecord, null, 2);
     await Promise.all([
-        fsp.writeFile(currentStoryPath, serialized),
-        fsp.writeFile(getStoryArchivePath(storyRecord.storyDateKey), serialized)
+        storage.write(CURRENT_STORY_KEY, storyRecord),
+        storage.write(storyArchiveKey(storyRecord.storyDateKey), storyRecord)
     ]);
 }
 
 async function loadDailyStoryFromStorage(storyDateKey) {
-    const targetPath = storyDateKey ? getStoryArchivePath(storyDateKey) : currentStoryPath;
-    return readJsonFile(targetPath, null);
+    const key = storyDateKey ? storyArchiveKey(storyDateKey) : CURRENT_STORY_KEY;
+    return storage.read(key, null);
 }
 
 async function loadSubscriptions() {
-    const data = await readJsonFile(subscriptionsPath, { subscriptions: [] });
+    const data = await storage.read(SUBSCRIPTIONS_KEY, { subscriptions: [] });
     if (!Array.isArray(data.subscriptions)) {
         return { subscriptions: [] };
     }
@@ -220,11 +199,11 @@ async function loadSubscriptions() {
 }
 
 async function saveSubscriptions(data) {
-    await writeJsonFile(subscriptionsPath, data);
+    await storage.write(SUBSCRIPTIONS_KEY, data);
 }
 
 async function loadNotificationLedger() {
-    const data = await readJsonFile(notificationLedgerPath, { entries: {} });
+    const data = await storage.read(NOTIFICATION_LEDGER_KEY, { entries: {} });
     if (!data.entries || typeof data.entries !== 'object' || Array.isArray(data.entries)) {
         return { entries: {} };
     }
@@ -232,7 +211,7 @@ async function loadNotificationLedger() {
 }
 
 async function saveNotificationLedger(data) {
-    await writeJsonFile(notificationLedgerPath, data);
+    await storage.write(NOTIFICATION_LEDGER_KEY, data);
 }
 
 function setCurrentResultFromStoryRecord(storyRecord) {
@@ -510,7 +489,7 @@ async function runDailyStoryJob(options = {}) {
 }
 
 async function upsertPushSubscription(subscription) {
-    return withFileLock(subscriptionsPath, async () => {
+    return withFileLock(SUBSCRIPTIONS_KEY, async () => {
         const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
         const subscriptionsData = await loadSubscriptions();
         const now = new Date().toISOString();
@@ -533,7 +512,7 @@ async function upsertPushSubscription(subscription) {
 }
 
 async function removePushSubscription(subscription) {
-    return withFileLock(subscriptionsPath, async () => {
+    return withFileLock(SUBSCRIPTIONS_KEY, async () => {
         const subscriptionIdentifier = getSubscriptionIdentifier(subscription);
         const subscriptionsData = await loadSubscriptions();
         const nextSubscriptions = subscriptionsData.subscriptions.filter((item) => {
@@ -560,7 +539,7 @@ function logPushEvent(event, details = {}, level = 'info') {
 }
 
 async function deactivateSubscription(endpoint, reason) {
-    return withFileLock(subscriptionsPath, async () => {
+    return withFileLock(SUBSCRIPTIONS_KEY, async () => {
     const subscriptionsData = await loadSubscriptions();
     const index = subscriptionsData.subscriptions.findIndex((item) => {
         const sub = item.subscription || item;
@@ -592,19 +571,19 @@ async function deactivateSubscription(endpoint, reason) {
 }
 
 async function loadPushDeliveryLog() {
-    return readJsonFile(pushDeliveryLogPath, []);
+    return storage.read(PUSH_DELIVERY_LOG_KEY, []);
 }
 
 const DELIVERY_LOG_MAX_ENTRIES = 1000;
 
 async function appendPushDeliveryLog(entry) {
-    return withFileLock(pushDeliveryLogPath, async () => {
+    return withFileLock(PUSH_DELIVERY_LOG_KEY, async () => {
         let entries = await loadPushDeliveryLog();
         entries.push(entry);
         if (entries.length > DELIVERY_LOG_MAX_ENTRIES) {
             entries = entries.slice(entries.length - DELIVERY_LOG_MAX_ENTRIES);
         }
-        await writeJsonFile(pushDeliveryLogPath, entries);
+        await storage.write(PUSH_DELIVERY_LOG_KEY, entries);
     });
 }
 
@@ -619,7 +598,7 @@ async function recordPushDeliveryStatus({ endpoint, status, storyDateKey, errorM
         errorMessage
     });
 
-    return withFileLock(subscriptionsPath, async () => {
+    return withFileLock(SUBSCRIPTIONS_KEY, async () => {
         const subscriptionsData = await loadSubscriptions();
         const index = subscriptionsData.subscriptions.findIndex((item) => {
             const sub = item.subscription || item;
