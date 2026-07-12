@@ -195,6 +195,19 @@ const getAdminStatusHandler = async (req, res) => {
 app.get(basePath + '/api/admin/status', security.rateLimiters.admin, security.requireApiKey, getAdminStatusHandler);
 app.get('/api/admin/status', security.rateLimiters.admin, security.requireApiKey, getAdminStatusHandler);
 
+// storyDateKey flows into storage keys and the generation prompt — reject
+// anything that isn't a bare YYYY-MM-DD before it reaches the scheduler.
+const validateOptionalStoryDateKey = (req, res, next) => {
+    const rawDateKey = req.body ? req.body.storyDateKey : undefined;
+    if (rawDateKey === undefined || rawDateKey === null) {
+        return next();
+    }
+    if (typeof rawDateKey !== 'string' || !VALID_DATE_RE.test(rawDateKey)) {
+        return res.status(400).json({ error: 'Invalid storyDateKey format. Use YYYY-MM-DD.' });
+    }
+    next();
+};
+
 // Protected endpoint - generate and persist the next daily story
 const postRefreshHandler = async (req, res) => {
     console.log('Manual daily story generation triggered');
@@ -215,7 +228,7 @@ const postRefreshHandler = async (req, res) => {
     }
 };
 
-const refreshMiddleware = [security.rateLimiters.refresh, security.requireApiKey];
+const refreshMiddleware = [security.rateLimiters.refresh, security.requireApiKey, validateOptionalStoryDateKey];
 app.post(basePath + '/api/refresh', ...refreshMiddleware, postRefreshHandler);
 app.post('/api/refresh', ...refreshMiddleware, postRefreshHandler);
 app.post(basePath + '/api/generate', ...refreshMiddleware, postRefreshHandler);
@@ -223,11 +236,11 @@ app.post('/api/generate', ...refreshMiddleware, postRefreshHandler);
 app.post(basePath + '/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
 app.post('/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
 
-app.post(basePath + '/api/jobs/daily-story', security.requireApiKey, handleAsyncRoute(async (req, res) => {
+app.post(basePath + '/api/jobs/daily-story', security.requireApiKey, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
     const result = await scheduler.runDailyStoryJob({ storyDateKey: req.body && req.body.storyDateKey });
     res.json({ success: true, result });
 }));
-app.post('/api/jobs/daily-story', security.requireApiKey, handleAsyncRoute(async (req, res) => {
+app.post('/api/jobs/daily-story', security.requireApiKey, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
     const result = await scheduler.runDailyStoryJob({ storyDateKey: req.body && req.body.storyDateKey });
     res.json({ success: true, result });
 }));
