@@ -2,6 +2,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 
 // Rate limiting configurations
 const createRateLimiter = (windowMs, max, message) => {
@@ -191,6 +192,62 @@ const requireApiKey = (req, res, next) => {
     next();
 };
 
+// Google OIDC authentication (for Cloud Scheduler → protected endpoints).
+// A single OAuth2Client is reused; it fetches and caches Google's public keys.
+let oauthClient = null;
+const getOAuthClient = () => {
+    if (!oauthClient) {
+        oauthClient = new OAuth2Client();
+    }
+    return oauthClient;
+};
+
+// Service accounts allowed to call OIDC-protected endpoints, from OIDC_ALLOWED_SA
+// (comma-separated). Empty ⇒ OIDC is not configured and Bearer tokens are ignored.
+const allowedServiceAccounts = () =>
+    (process.env.OIDC_ALLOWED_SA || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+// Verify a Google-signed OIDC ID token: valid signature, matching audience (when
+// OIDC_AUDIENCE is set), verified email, and an allowlisted service-account email.
+// Throws on any failure. Returns the token payload on success.
+const verifyOidcToken = async (idToken) => {
+    const audience = process.env.OIDC_AUDIENCE || null;
+    const ticket = await getOAuthClient().verifyIdToken({ idToken, audience });
+    const payload = ticket.getPayload();
+    if (!payload || payload.email_verified !== true) {
+        throw new Error('OIDC token email not verified');
+    }
+    if (!allowedServiceAccounts().includes(payload.email)) {
+        throw new Error('OIDC token email not allowlisted');
+    }
+    return payload;
+};
+
+// Accept EITHER a Google OIDC Bearer token (from an allowlisted service account)
+// OR the legacy x-api-key. Used on scheduler-driven endpoints during the
+// key→OIDC migration: Cloud Scheduler sends a Bearer token; the api-key path stays
+// working until the scheduler job is switched over.
+const requireApiKeyOrOidc = async (req, res, next) => {
+    const authHeader = req.headers['authorization'] || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+    // OIDC path only when a Bearer token is present AND OIDC is configured;
+    // otherwise fall through to the API key so existing callers keep working.
+    if (bearer && allowedServiceAccounts().length > 0) {
+        try {
+            await verifyOidcToken(bearer);
+            return next();
+        } catch (err) {
+            return res.status(401).json({ error: 'Invalid OIDC token' });
+        }
+    }
+
+    return requireApiKey(req, res, next);
+};
+
 // CSRF token generation and validation
 const csrfTokens = new Map();
 
@@ -298,6 +355,7 @@ module.exports = {
     validators,
     handleValidationErrors,
     requireApiKey,
+    requireApiKeyOrOidc,
     generateCsrfToken,
     validateCsrfToken,
     requestLogger,
