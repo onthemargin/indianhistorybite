@@ -226,26 +226,26 @@ const verifyOidcToken = async (idToken) => {
     return payload;
 };
 
-// Accept EITHER a Google OIDC Bearer token (from an allowlisted service account)
-// OR the legacy x-api-key. Used on scheduler-driven endpoints during the
-// key→OIDC migration: Cloud Scheduler sends a Bearer token; the api-key path stays
-// working until the scheduler job is switched over.
-const requireApiKeyOrOidc = async (req, res, next) => {
-    const authHeader = req.headers['authorization'] || '';
-    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-
-    // OIDC path only when a Bearer token is present AND OIDC is configured;
-    // otherwise fall through to the API key so existing callers keep working.
-    if (bearer && allowedServiceAccounts().length > 0) {
-        try {
-            await verifyOidcToken(bearer);
-            return next();
-        } catch (err) {
-            return res.status(401).json({ error: 'Invalid OIDC token' });
-        }
+// Require a valid Google OIDC Bearer token from an allowlisted service account.
+// No API-key fallback: this is for machine-only endpoints (e.g. the Cloud
+// Scheduler daily-story job) after the key→OIDC migration is complete.
+const requireOidc = async (req, res, next) => {
+    if (allowedServiceAccounts().length === 0) {
+        return res.status(503).json({ error: 'OIDC is not configured for this protected endpoint' });
     }
 
-    return requireApiKey(req, res, next);
+    const authHeader = req.headers['authorization'] || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (!bearer) {
+        return res.status(401).json({ error: 'OIDC token required' });
+    }
+
+    try {
+        await verifyOidcToken(bearer);
+        return next();
+    } catch (err) {
+        return res.status(401).json({ error: 'Invalid OIDC token' });
+    }
 };
 
 // CSRF token generation and validation
@@ -355,7 +355,7 @@ module.exports = {
     validators,
     handleValidationErrors,
     requireApiKey,
-    requireApiKeyOrOidc,
+    requireOidc,
     generateCsrfToken,
     validateCsrfToken,
     requestLogger,

@@ -1,4 +1,4 @@
-// Tests for OIDC-or-API-key auth on the scheduler-driven daily-story endpoint.
+// Tests for OIDC-only auth on the scheduler-driven daily-story endpoint.
 // google-auth-library is mocked so no network / real Google keys are needed.
 
 const mockVerifyIdToken = jest.fn();
@@ -13,9 +13,9 @@ const security = require('../security');
 // Build a resolved verifyIdToken ticket with the given payload.
 const ticketWith = (payload) => Promise.resolve({ getPayload: () => payload });
 
-describe('requireApiKeyOrOidc', () => {
+describe('requireOidc', () => {
     let req, res, next;
-    const SA = 'indianhistorybite-daily-story@test-project.iam.gserviceaccount.com';
+    const SA = 'scheduler-invoker@test-project.iam.gserviceaccount.com';
     const AUD = 'https://app.gyatso.me/indianhistorybite/api/jobs/daily-story';
 
     beforeEach(() => {
@@ -27,7 +27,6 @@ describe('requireApiKeyOrOidc', () => {
             json: jest.fn().mockReturnThis()
         };
         next = jest.fn();
-        process.env.APP_API_KEY = 'the-legacy-key';
         process.env.OIDC_ALLOWED_SA = SA;
         process.env.OIDC_AUDIENCE = AUD;
     });
@@ -39,13 +38,13 @@ describe('requireApiKeyOrOidc', () => {
     });
 
     it('is exported as a function', () => {
-        expect(typeof security.requireApiKeyOrOidc).toBe('function');
+        expect(typeof security.requireOidc).toBe('function');
     });
 
     it('allows a valid OIDC token from an allowlisted, verified SA', async () => {
         mockVerifyIdToken.mockReturnValue(ticketWith({ email: SA, email_verified: true }));
         req.headers['authorization'] = 'Bearer good.token.here';
-        await security.requireApiKeyOrOidc(req, res, next);
+        await security.requireOidc(req, res, next);
         expect(next).toHaveBeenCalled();
         expect(res.json).not.toHaveBeenCalled();
     });
@@ -53,7 +52,7 @@ describe('requireApiKeyOrOidc', () => {
     it('verifies the token against the configured audience', async () => {
         mockVerifyIdToken.mockReturnValue(ticketWith({ email: SA, email_verified: true }));
         req.headers['authorization'] = 'Bearer good.token.here';
-        await security.requireApiKeyOrOidc(req, res, next);
+        await security.requireOidc(req, res, next);
         expect(mockVerifyIdToken).toHaveBeenCalledWith(
             expect.objectContaining({ idToken: 'good.token.here', audience: AUD })
         );
@@ -62,7 +61,7 @@ describe('requireApiKeyOrOidc', () => {
     it('rejects a token whose email is not allowlisted', async () => {
         mockVerifyIdToken.mockReturnValue(ticketWith({ email: 'attacker@evil.com', email_verified: true }));
         req.headers['authorization'] = 'Bearer good.token.here';
-        await security.requireApiKeyOrOidc(req, res, next);
+        await security.requireOidc(req, res, next);
         expect(res.statusCode).toBe(401);
         expect(next).not.toHaveBeenCalled();
     });
@@ -70,7 +69,7 @@ describe('requireApiKeyOrOidc', () => {
     it('rejects a token whose email is not verified', async () => {
         mockVerifyIdToken.mockReturnValue(ticketWith({ email: SA, email_verified: false }));
         req.headers['authorization'] = 'Bearer good.token.here';
-        await security.requireApiKeyOrOidc(req, res, next);
+        await security.requireOidc(req, res, next);
         expect(res.statusCode).toBe(401);
         expect(next).not.toHaveBeenCalled();
     });
@@ -78,30 +77,32 @@ describe('requireApiKeyOrOidc', () => {
     it('rejects when signature verification throws (bad/expired token)', async () => {
         mockVerifyIdToken.mockImplementation(() => Promise.reject(new Error('invalid signature')));
         req.headers['authorization'] = 'Bearer bad.token';
-        await security.requireApiKeyOrOidc(req, res, next);
+        await security.requireOidc(req, res, next);
         expect(res.statusCode).toBe(401);
         expect(next).not.toHaveBeenCalled();
     });
 
-    it('falls back to the API key when no Bearer token is present', async () => {
-        req.headers['x-api-key'] = 'the-legacy-key';
-        await security.requireApiKeyOrOidc(req, res, next);
-        expect(next).toHaveBeenCalled();
+    it('rejects when no Bearer token is present', async () => {
+        await security.requireOidc(req, res, next);
+        expect(res.statusCode).toBe(401);
+        expect(next).not.toHaveBeenCalled();
         expect(mockVerifyIdToken).not.toHaveBeenCalled();
     });
 
-    it('rejects when neither Bearer token nor API key is provided', async () => {
-        await security.requireApiKeyOrOidc(req, res, next);
+    it('does NOT fall back to the API key (no key path anymore)', async () => {
+        process.env.APP_API_KEY = 'the-legacy-key';
+        req.headers['x-api-key'] = 'the-legacy-key'; // present but no Bearer
+        await security.requireOidc(req, res, next);
         expect(res.statusCode).toBe(401);
         expect(next).not.toHaveBeenCalled();
+        expect(mockVerifyIdToken).not.toHaveBeenCalled();
     });
 
-    it('ignores OIDC and uses the API key when OIDC is not configured', async () => {
+    it('returns 503 when OIDC is not configured', async () => {
         delete process.env.OIDC_ALLOWED_SA;
-        req.headers['authorization'] = 'Bearer some.token';
-        req.headers['x-api-key'] = 'the-legacy-key';
-        await security.requireApiKeyOrOidc(req, res, next);
-        expect(next).toHaveBeenCalled();
-        expect(mockVerifyIdToken).not.toHaveBeenCalled();
+        req.headers['authorization'] = 'Bearer good.token.here';
+        await security.requireOidc(req, res, next);
+        expect(res.statusCode).toBe(503);
+        expect(next).not.toHaveBeenCalled();
     });
 });

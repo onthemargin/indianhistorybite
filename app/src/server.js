@@ -236,11 +236,11 @@ app.post('/api/generate', ...refreshMiddleware, postRefreshHandler);
 app.post(basePath + '/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
 app.post('/api/cron/generate', ...refreshMiddleware, postRefreshHandler);
 
-app.post(basePath + '/api/jobs/daily-story', security.requireApiKeyOrOidc, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
+app.post(basePath + '/api/jobs/daily-story', security.requireOidc, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
     const result = await scheduler.runDailyStoryJob({ storyDateKey: req.body && req.body.storyDateKey });
     res.json({ success: true, result });
 }));
-app.post('/api/jobs/daily-story', security.requireApiKeyOrOidc, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
+app.post('/api/jobs/daily-story', security.requireOidc, validateOptionalStoryDateKey, handleAsyncRoute(async (req, res) => {
     const result = await scheduler.runDailyStoryJob({ storyDateKey: req.body && req.body.storyDateKey });
     res.json({ success: true, result });
 }));
