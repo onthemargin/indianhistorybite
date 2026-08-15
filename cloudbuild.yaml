@@ -1,5 +1,9 @@
 steps:
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  # :slim, not the full cloud-sdk image. This build's only job is to kick the
+  # monorepo trigger — a command that takes seconds — but it was measured at
+  # 69-88s, nearly all of it pulling the multi-GB fat image. Same gcloud CLI.
+  # Covered by app.gyatso.me tests/test_relay_triggers.sh.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     entrypoint: gcloud
     args:
       - builds
